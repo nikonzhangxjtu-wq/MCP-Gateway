@@ -1,0 +1,49 @@
+mcp:
+  gateway:
+    services:
+      - id: amap
+        name: AMap MCP
+        description: Official AMap remote MCP service for maps, POI, weather, routes, and app deep links
+        tags: [amap, gaode, map, location, weather, route, 高德, 地图, 天气, 路线]
+        transport: streamable-http
+        url: https://mcp.amap.com/mcp?key=${AMAP_MAPS_API_KEY:}
+        timeoutMs: 20000
+        requiresUserCredential: false
+      - id: fetch
+        name: Fetch MCP
+        description: Fetch public web content
+        tags: [web, http, fetch, 网页, 抓取]
+        transport: stdio
+        command: uvx
+        args: ["mcp-server-fetch"]
+        timeoutMs: 20000
+        requiresUserCredential: false
+      - id: filesystem
+        name: Filesystem MCP
+        description: Read files from the local gateway sandbox
+        tags: [files, local, knowledge, 文件, 本地]
+        transport: stdio
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "./sandbox"]
+        workingDirectory: "."
+        timeoutMs: 15000
+        requiresUserCredential: false
+      - id: github
+        name: GitHub MCP
+        description: Read GitHub repository metadata and issues
+        tags: [github, code, issues, repository]
+        transport: stdio
+        command: docker
+        args: ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "-e", "GITHUB_READ_ONLY=1", "ghcr.io/github/github-mcp-server"]
+        timeoutMs: 30000
+        requiresUserCredential: false
+        enabled: false
+      - id: time
+        name: Time MCP
+        description: Read current time and convert time zones
+        tags: [time, timezone, clock, 时间, 时区]
+        transport: stdio
+        command: uvx
+        args: ["mcp-server-time"]
+        timeoutMs: 15000
+        requiresUserCredential: false
