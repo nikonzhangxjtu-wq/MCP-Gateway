@@ -44,7 +44,7 @@ Cursor / Agent
 | Maven | 3.8+ | 构建和测试 | `mvn -version` |
 | Cursor | 支持 MCP 的版本 | 作为真实 MCP Client 验收 | Cursor Settings -> MCP |
 
-### 可选环境
+### 可选环境(自行开发agent测试用，已弃用)
 
 | 依赖 | 用途 | 检查命令 |
 | --- | --- | --- |
