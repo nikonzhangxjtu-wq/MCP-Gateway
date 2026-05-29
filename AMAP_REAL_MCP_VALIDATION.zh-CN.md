@@ -1,6 +1,6 @@
 # 高德地图真实远程 MCP 验证说明
 
-本文记录本阶段将高德地图官方 MCP Server 接入 `java-mcp-gateway` 的改动和验证结果。高德 Key 属于敏感凭证，仓库配置只读取环境变量，不写入完整 Key。
+本文记录本阶段将高德地图官方 MCP Server 接入 `java-mcp-gateway` 的改动和验证结果。高德 Key 属于敏感凭证，当前实现不再依赖启动前环境变量，而是由用户通过 Gateway catalog tool 提交，并加密保存到本机。
 
 ## 接入目标
 
@@ -57,14 +57,32 @@ sequenceDiagram
 - id: amap
   name: AMap MCP
   transport: streamable-http
-  url: https://mcp.amap.com/mcp?key=${AMAP_MAPS_API_KEY:}
+  url: https://mcp.amap.com/mcp?key={api_key}
+  requiresUserCredential: true
+  credentialRequirements:
+    - name: api_key
+      description: 高德开放平台 Web 服务 Key
+      secret: true
 ```
 
-启动时通过环境变量提供 Key：
+启动 Gateway 时不需要提供高德 Key：
 
 ```bash
-export AMAP_MAPS_API_KEY="你的高德 Key"
 mvn spring-boot:run -Dspring-boot.run.profiles=real-mcp -Dspring-boot.run.arguments=--server.port=8091
+```
+
+用户通过 Cursor 或 curl 提交凭证：
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"submit","method":"tools/call","params":{"name":"submit_mcp_credential","arguments":{"service_id":"amap","credential_type":"api_key","credential_value":"你的高德Key"}}}'
+
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"refresh","method":"tools/call","params":{"name":"refresh_mcp_service","arguments":{"service_id":"amap"}}}'
 ```
 
 ### `McpGatewayController`

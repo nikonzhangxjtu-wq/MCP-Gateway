@@ -6,9 +6,13 @@ mcp:
         description: Official AMap remote MCP service for maps, POI, weather, routes, and app deep links
         tags: [amap, gaode, map, location, weather, route, 高德, 地图, 天气, 路线]
         transport: streamable-http
-        url: https://mcp.amap.com/mcp?key=${AMAP_MAPS_API_KEY:}
+        url: https://mcp.amap.com/mcp?key={api_key}
         timeoutMs: 20000
-        requiresUserCredential: false
+        requiresUserCredential: true
+        credentialRequirements:
+          - name: api_key
+            description: 高德开放平台 Web 服务 Key
+            secret: true
       - id: fetch
         name: Fetch MCP
         description: Fetch public web content

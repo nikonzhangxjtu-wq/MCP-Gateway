@@ -73,18 +73,19 @@ Gateway 启动命令：
 ```bash
 cd /Users/nikonzhang/shixi/mcp-gateway/Unla/java-mcp-gateway
 
-export AMAP_MAPS_API_KEY="你的高德 Key"
-
 mvn spring-boot:run \
   -Dspring-boot.run.profiles=real-mcp \
   -Dspring-boot.run.arguments=--server.port=8091
 ```
 
-高德 Key 不写入仓库，只通过环境变量注入：
+高德 Key 不写入仓库，也不再通过启动环境变量注入。服务配置使用凭证模板：
 
 ```yaml
-url: https://mcp.amap.com/mcp?key=${AMAP_MAPS_API_KEY:}
+url: https://mcp.amap.com/mcp?key={api_key}
+requiresUserCredential: true
 ```
+
+用户在 Cursor 中通过 `submit_mcp_credential` 提交自己的 `api_key`，再调用 `refresh_mcp_service` 刷新高德工具索引。
 
 ## 4. Gateway 暴露给 Cursor 的工具
 
@@ -96,6 +97,10 @@ Cursor 顶层只会看到 Gateway catalog tools：
 | `describe_mcp_service` | 查看单个 MCP 服务摘要 |
 | `list_mcp_tools` | 按需查看某个 MCP 服务的完整工具列表 |
 | `get_auth_status` | 查询某个服务是否需要用户凭证、当前是否可调用 |
+| `get_credential_requirements` | 查看某个服务需要哪些凭证字段 |
+| `submit_mcp_credential` | 提交当前用户对某个服务的凭证 |
+| `delete_mcp_credential` | 删除当前用户对某个服务的凭证 |
+| `refresh_mcp_service` | 提交凭证后刷新下游服务工具索引 |
 | `call_mcp_tool` | 调用某个下游 MCP 的具体工具 |
 
 这个设计的核心目的是控制上下文规模。即使后续有 100 个 MCP 服务、上千个工具，Cursor 顶层仍只挂载少量 Gateway tools。

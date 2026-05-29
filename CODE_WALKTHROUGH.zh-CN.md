@@ -79,18 +79,19 @@ Agent 首先调用：
 2. 用户是否有服务 use 权限。
 3. 用户是否有具体 tool 权限。
 4. 如果服务要求用户 credential，检查 `CredentialStore` 是否存在对应凭证。
+5. 对使用 URL 模板的远程 MCP 服务，将用户凭证注入 endpoint，例如把 `{api_key}` 替换成当前用户提交的高德 Key。
 
 如果缺权限，返回 `permission_denied`；如果缺 credential，返回 `auth_required`。只有全部通过后才会进入下游转发。
 
-生产环境建议把这里的 `PermissionService` 替换为公司 runtime/IAM/AuthZ 服务，把 `CredentialStore` 替换为加密数据库或 Vault/KMS。
+当前本地原型的 `CredentialStore` 已有 AES-GCM 加密文件实现，默认写入 `~/.mcp-gateway/credentials.enc`，master key 写入 `~/.mcp-gateway/master.key`。生产环境建议把这里的 `PermissionService` 替换为公司 runtime/IAM/AuthZ 服务，把本地凭证文件替换为 Vault/KMS 或公司统一凭证系统。
 
 ## 6. 核心路由转发
 
 `StreamableHttpMcpClient.callTool()` 是当前阶段的核心转发实现：
 
 1. 把 gateway catalog call 转成下游 MCP JSON-RPC `tools/call`。
-2. 将用户 credential 注入到下游请求的 `Authorization` header。
-3. 使用 `RestTemplate` POST 到 `/mock/feishu/mcp`。
+2. 根据服务配置把用户 credential 注入下游 endpoint、header 或后续扩展的认证位置。
+3. 使用 `RestTemplate` POST 到下游 MCP endpoint。
 4. 从下游 JSON-RPC 响应中提取 `content[0].text` 返回给 gateway。
 
 这条链路验证了 gateway 不只是本地 mock 结果，而是真正经过 HTTP MCP client 转发到了下游 MCP endpoint。

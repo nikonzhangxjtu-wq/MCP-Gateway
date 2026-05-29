@@ -53,11 +53,38 @@ public final class McpJsonRpcHandler {
             String serviceId = String.valueOf(arguments.getOrDefault("service_id", ""));
             content = Map.of(
                     "service_id", serviceId,
-                    "tools", toolList(runtime.listTools(user, serviceId))
+                    "tools", toolList(runtime.listTools(user, serviceId)),
+                    "auth_status", runtime.authStatus(user, serviceId)
             );
         } else if ("get_auth_status".equals(toolName)) {
             String serviceId = String.valueOf(arguments.getOrDefault("service_id", ""));
             content = runtime.authStatus(user, serviceId);
+        } else if ("get_credential_requirements".equals(toolName)) {
+            String serviceId = String.valueOf(arguments.getOrDefault("service_id", ""));
+            content = runtime.credentialRequirements(user, serviceId);
+        } else if ("submit_mcp_credential".equals(toolName)) {
+            String serviceId = String.valueOf(arguments.getOrDefault("service_id", ""));
+            String credentialType = String.valueOf(arguments.getOrDefault("credential_type", ""));
+            String credentialValue = String.valueOf(arguments.getOrDefault("credential_value", ""));
+            ToolCallResult result = runtime.submitCredential(user, serviceId, credentialType, credentialValue);
+            if (!result.allowed()) {
+                return error(id, -32001, result.errorCode() + ": " + result.errorMessage());
+            }
+            content = result.content();
+        } else if ("delete_mcp_credential".equals(toolName)) {
+            String serviceId = String.valueOf(arguments.getOrDefault("service_id", ""));
+            ToolCallResult result = runtime.deleteCredential(user, serviceId);
+            if (!result.allowed()) {
+                return error(id, -32001, result.errorCode() + ": " + result.errorMessage());
+            }
+            content = result.content();
+        } else if ("refresh_mcp_service".equals(toolName)) {
+            String serviceId = String.valueOf(arguments.getOrDefault("service_id", ""));
+            ToolCallResult result = runtime.refreshService(user, serviceId);
+            if (!result.allowed()) {
+                return error(id, -32001, result.errorCode() + ": " + result.errorMessage());
+            }
+            content = result.content();
         } else if ("call_mcp_tool".equals(toolName)) {
             String serviceId = String.valueOf(arguments.getOrDefault("service_id", ""));
             String downstreamTool = String.valueOf(arguments.getOrDefault("tool_name", ""));

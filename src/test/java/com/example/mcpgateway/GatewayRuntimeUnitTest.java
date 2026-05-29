@@ -174,6 +174,83 @@ class GatewayRuntimeUnitTest {
                 .containsExactly("amap");
     }
 
+    @Test
+    void credentialRequiredServiceStartsUnindexedThenRefreshesWithUserCredential() {
+        RecordingMcpClient client = new RecordingMcpClient(List.of(
+                new ToolSchema("maps_weather", "Weather", Map.of("city", "string"))
+        ));
+        DownstreamClientRegistry downstream = new DownstreamClientRegistry();
+        downstream.register("amap", client);
+        GatewayRuntime runtime = GatewayRuntime.createDefault(downstream);
+        runtime.registerService(ServiceDefinition.streamableHttp(
+                "amap",
+                "AMap MCP",
+                "Official AMap remote MCP service",
+                List.of("amap", "高德", "天气"),
+                "https://mcp.amap.com/mcp?key={api_key}",
+                true,
+                List.of(new CredentialRequirement("api_key", "高德开放平台 Web 服务 Key", true))
+        ));
+        UserContext alice = new UserContext("alice", "default", "agent-test", List.of(
+                "mcp:amap:discover",
+                "mcp:amap:use",
+                "mcp:amap:*"
+        ));
+
+        assertThat(runtime.listTools(alice, "amap")).isEmpty();
+        assertThat(runtime.authStatus(alice, "amap"))
+                .containsEntry("requires_user_credential", true)
+                .containsEntry("has_credential", false)
+                .containsEntry("callable", false)
+                .containsEntry("indexed", false)
+                .containsEntry("next_action", "submit_mcp_credential");
+
+        runtime.submitCredential(alice, "amap", "api_key", "secret-amap-key");
+        assertThat(runtime.authStatus(alice, "amap"))
+                .containsEntry("has_credential", true)
+                .containsEntry("callable", false)
+                .containsEntry("next_action", "refresh_mcp_service");
+        ToolCallResult refresh = runtime.refreshService(alice, "amap");
+
+        assertThat(refresh.allowed()).isTrue();
+        assertThat(runtime.listTools(alice, "amap")).extracting(ToolSchema::name).contains("maps_weather");
+        assertThat(runtime.authStatus(alice, "amap"))
+                .containsEntry("callable", true)
+                .containsEntry("indexed", true)
+                .containsEntry("next_action", "call_mcp_tool");
+    }
+
+    @Test
+    void deleteCredentialReturnsServiceToAuthRequiredState() {
+        DownstreamClientRegistry downstream = new DownstreamClientRegistry();
+        downstream.register("amap", new RecordingMcpClient(List.of(
+                new ToolSchema("maps_weather", "Weather", Map.of("city", "string"))
+        )));
+        GatewayRuntime runtime = GatewayRuntime.createDefault(downstream);
+        runtime.registerService(ServiceDefinition.streamableHttp(
+                "amap",
+                "AMap MCP",
+                "Official AMap remote MCP service",
+                List.of("amap"),
+                "https://mcp.amap.com/mcp?key={api_key}",
+                true,
+                List.of(new CredentialRequirement("api_key", "高德开放平台 Web 服务 Key", true))
+        ));
+        UserContext alice = new UserContext("alice", "default", "agent-test", List.of(
+                "mcp:amap:discover",
+                "mcp:amap:use",
+                "mcp:amap:*"
+        ));
+
+        runtime.submitCredential(alice, "amap", "api_key", "secret-amap-key");
+        runtime.deleteCredential(alice, "amap");
+
+        assertThat(runtime.authStatus(alice, "amap"))
+                .containsEntry("has_credential", false)
+                .containsEntry("callable", false)
+                .containsEntry("next_action", "submit_mcp_credential");
+    }
+
     private GatewayRuntime runtimeWithoutCredentials() {
         DownstreamClientRegistry downstream = new DownstreamClientRegistry();
         downstream.register("feishu", new InMemoryMcpClient(MockFeishuMcpController.feishuTools()));

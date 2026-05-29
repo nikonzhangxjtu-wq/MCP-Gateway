@@ -29,7 +29,7 @@ public class GatewayConfiguration {
                 feishuTools
         ));
 
-        GatewayRuntime runtime = GatewayRuntime.createDefault(downstreamClients);
+        GatewayRuntime runtime = GatewayRuntime.createDefault(downstreamClients, EncryptedFileCredentialStore.defaultStore());
         runtime.registerService(ServiceDefinition.streamableHttp(
                 "feishu",
                 "Feishu MCP",
@@ -70,7 +70,8 @@ public class GatewayConfiguration {
                         service.getDescription(),
                         service.getTags(),
                         service.getUrl(),
-                        service.isRequiresUserCredential()
+                        service.isRequiresUserCredential(),
+                        credentialRequirements(service)
                 ));
                 continue;
             }
@@ -99,5 +100,15 @@ public class GatewayConfiguration {
                     service.isRequiresUserCredential()
             ));
         }
+    }
+
+    private List<CredentialRequirement> credentialRequirements(McpServiceCatalogProperties.ServiceConfig service) {
+        return service.getCredentialRequirements().stream()
+                .map(requirement -> new CredentialRequirement(
+                        requirement.getName(),
+                        requirement.getDescription(),
+                        requirement.isSecret()
+                ))
+                .toList();
     }
 }

@@ -4,6 +4,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -30,11 +32,16 @@ public final class StreamableHttpMcpClient implements McpClient {
 
     @Override
     public synchronized List<ToolSchema> listTools() {
+        return listTools(null);
+    }
+
+    @Override
+    public synchronized List<ToolSchema> listTools(Credential credential) {
         if (!bootstrapTools.isEmpty()) {
             // Startup indexing for in-process test endpoints should not depend on the HTTP server accepting traffic.
             return bootstrapTools;
         }
-        ensureInitialized();
+        ensureInitialized(credential);
         if (cachedTools != null) {
             return cachedTools;
         }
@@ -43,7 +50,7 @@ public final class StreamableHttpMcpClient implements McpClient {
                 "id", nextId(),
                 "method", "tools/list",
                 "params", Map.of()
-        ), null);
+        ), credential);
         Object resultValue = response.get("result");
         if (!(resultValue instanceof Map<?, ?> result)) {
             cachedTools = List.of();
@@ -63,7 +70,7 @@ public final class StreamableHttpMcpClient implements McpClient {
 
     @Override
     public synchronized String callTool(String serviceId, String toolName, Map<String, Object> arguments, Credential credential) {
-        ensureInitialized();
+        ensureInitialized(credential);
         Map<String, Object> request = Map.of(
                 "jsonrpc", "2.0",
                 "id", nextId(),
@@ -77,7 +84,7 @@ public final class StreamableHttpMcpClient implements McpClient {
         return extractContent(response);
     }
 
-    private void ensureInitialized() {
+    private void ensureInitialized(Credential credential) {
         if (initialized) {
             return;
         }
@@ -90,7 +97,7 @@ public final class StreamableHttpMcpClient implements McpClient {
                         "capabilities", Map.of(),
                         "clientInfo", Map.of("name", "java-mcp-gateway", "version", "0.1.0")
                 )
-        ), null);
+        ), credential);
         initialized = true;
     }
 
@@ -99,25 +106,36 @@ public final class StreamableHttpMcpClient implements McpClient {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setAccept(List.of(MediaType.APPLICATION_JSON, MediaType.TEXT_EVENT_STREAM));
-        if (credential != null && !credential.value().isBlank()) {
+        if (credential != null && !credential.value().isBlank() && !usesEndpointPlaceholder(credential)) {
             // The gateway swaps the agent identity for the user's downstream service credential.
             headers.setBearerAuth(credential.value());
         }
 
         return restTemplate.postForObject(
-                resolveEndpoint(),
+                resolveEndpoint(credential),
                 new HttpEntity<>(request, headers),
                 Map.class
         );
     }
 
-    private String resolveEndpoint() {
-        if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
-            return endpoint;
+    private String resolveEndpoint(Credential credential) {
+        String resolved = endpoint;
+        if (credential != null && endpoint.contains("{" + credential.type() + "}")) {
+            resolved = endpoint.replace(
+                    "{" + credential.type() + "}",
+                    URLEncoder.encode(credential.value(), StandardCharsets.UTF_8)
+            );
+        }
+        if (resolved.startsWith("http://") || resolved.startsWith("https://")) {
+            return resolved;
         }
         return ServletUriComponentsBuilder.fromCurrentContextPath()
-                .path(endpoint)
+                .path(resolved)
                 .toUriString();
+    }
+
+    private boolean usesEndpointPlaceholder(Credential credential) {
+        return endpoint.contains("{" + credential.type() + "}");
     }
 
     private String extractContent(Map<String, Object> response) {

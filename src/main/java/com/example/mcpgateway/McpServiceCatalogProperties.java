@@ -30,6 +30,7 @@ public class McpServiceCatalogProperties {
         private String workingDirectory = ".";
         private long timeoutMs = 10000;
         private boolean requiresUserCredential;
+        private List<CredentialRequirementConfig> credentialRequirements = List.of();
         private boolean enabled = true;
 
         public String getId() {
@@ -128,12 +129,50 @@ public class McpServiceCatalogProperties {
             this.requiresUserCredential = requiresUserCredential;
         }
 
+        public List<CredentialRequirementConfig> getCredentialRequirements() {
+            return credentialRequirements;
+        }
+
+        public void setCredentialRequirements(List<CredentialRequirementConfig> credentialRequirements) {
+            this.credentialRequirements = credentialRequirements;
+        }
+
         public boolean isEnabled() {
             return enabled;
         }
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+    }
+
+    public static class CredentialRequirementConfig {
+        private String name;
+        private String description;
+        private boolean secret = true;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getDescription() {
+            return description;
+        }
+
+        public void setDescription(String description) {
+            this.description = description;
+        }
+
+        public boolean isSecret() {
+            return secret;
+        }
+
+        public void setSecret(boolean secret) {
+            this.secret = secret;
         }
     }
 }

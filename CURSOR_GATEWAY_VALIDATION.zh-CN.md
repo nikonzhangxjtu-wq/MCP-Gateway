@@ -16,6 +16,10 @@ Cursor 不直接挂载高德 MCP。Cursor 只看到 Gateway 暴露的 catalog to
 - `describe_mcp_service`
 - `list_mcp_tools`
 - `get_auth_status`
+- `get_credential_requirements`
+- `submit_mcp_credential`
+- `delete_mcp_credential`
+- `refresh_mcp_service`
 - `call_mcp_tool`
 
 高德的 15 个真实工具由 `list_mcp_tools(service_id=amap)` 按需展开，避免后续接入大量 MCP 服务时造成上下文膨胀。
@@ -59,7 +63,7 @@ Cursor 不直接挂载高德 MCP。Cursor 只看到 Gateway 暴露的 catalog to
       "tags": ["amap", "gaode", "map", "location", "weather", "route", "高德", "地图", "天气", "路线"],
       "tool_count": 15,
       "available": true,
-      "requires_user_credential": false,
+      "requires_user_credential": true,
       "recommended_tools": [
         {
           "name": "maps_weather",
@@ -87,17 +91,22 @@ Gateway 已接受 `notifications/initialized`，避免 Cursor 初始化后发送
 
 ## 启动 Gateway
 
-不要把高德 Key 写入仓库。启动时从环境变量注入：
+不要把高德 Key 写入仓库，也不再要求启动前 `export AMAP_MAPS_API_KEY`。Gateway 启动后，用户通过 Cursor 调用 `submit_mcp_credential` 提交自己的高德 Key。
 
 ```bash
 cd /Users/nikonzhang/shixi/mcp-gateway/Unla/java-mcp-gateway
-
-export AMAP_MAPS_API_KEY="你的高德 Key"
 
 mvn spring-boot:run \
   -Dspring-boot.run.profiles=real-mcp \
   -Dspring-boot.run.arguments=--server.port=8091
 ```
+
+用户凭证会保存到本机加密文件：
+
+- `~/.mcp-gateway/credentials.enc`
+- `~/.mcp-gateway/master.key`
+
+这是本地原型方案。生产环境应替换为公司统一凭证系统、Vault/KMS 或专门授权页。
 
 ## Cursor 配置
 
@@ -150,11 +159,53 @@ curl -s http://127.0.0.1:8091/mcp \
 预期包含：
 
 - `"id":"amap"`
-- `"tool_count":15`
+- `"requires_user_credential":true`
 - `"available":true`
-- `"recommended_tools"`
 
-### 3. 查看高德完整工具 schema
+如果还没有提交高德 Key，`tool_count` 可能为 `0`，`indexed=false`，这是预期行为。Gateway 仍能发现 `amap` 服务，但不会用空 Key 去拉取高德工具列表。
+
+### 3. 查看高德凭证要求
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"requirements","method":"tools/call","params":{"name":"get_credential_requirements","arguments":{"service_id":"amap"}}}'
+```
+
+预期返回：
+
+- `name: api_key`
+- `secret: true`
+- `description: 高德开放平台 Web 服务 Key`
+
+### 4. 提交高德 Key
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"submit","method":"tools/call","params":{"name":"submit_mcp_credential","arguments":{"service_id":"amap","credential_type":"api_key","credential_value":"你的高德Key"}}}'
+```
+
+预期返回 `stored:true`，并且只显示脱敏后的 `masked_value`。
+
+### 5. 刷新高德工具索引
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"refresh","method":"tools/call","params":{"name":"refresh_mcp_service","arguments":{"service_id":"amap"}}}'
+```
+
+预期返回：
+
+- `refreshed:true`
+- `indexed:true`
+- `tool_count:15`
+
+### 6. 查看高德完整工具 schema
 
 ```bash
 curl -s http://127.0.0.1:8091/mcp \
@@ -165,7 +216,7 @@ curl -s http://127.0.0.1:8091/mcp \
 
 预期 `maps_weather` 包含完整 `inputSchema.properties.city.description`。
 
-### 4. 通过 Gateway 调用高德天气
+### 7. 通过 Gateway 调用高德天气
 
 ```bash
 curl -s http://127.0.0.1:8091/mcp \
@@ -194,9 +245,15 @@ curl -s http://127.0.0.1:8091/mcp \
 
 ```text
 search_mcp_services(query="高德地图")
+get_auth_status(service_id="amap")
+get_credential_requirements(service_id="amap")
+submit_mcp_credential(service_id="amap", credential_type="api_key", credential_value="...")
+refresh_mcp_service(service_id="amap")
 list_mcp_tools(service_id="amap")
 call_mcp_tool(service_id="amap", tool_name="maps_weather", city="北京")
 ```
+
+如果已经提交过高德 Key，并且 `refresh_mcp_service` 成功执行过，Cursor 可以直接从 `search_mcp_services` / `list_mcp_tools` 进入工具调用。
 
 ## 当前边界
 
@@ -206,7 +263,7 @@ call_mcp_tool(service_id="amap", tool_name="maps_weather", city="北京")
 
 - Streamable HTTP event-stream 分片解析。
 - MCP session header 管理。
-- OAuth 和用户凭证注入。
+- OAuth、二维码、短信验证码等交互式授权流。
 - 服务目录动态刷新。
 - 高并发下的连接池、限流、熔断和重试。
 - 权限系统对接公司 Agent runtime。

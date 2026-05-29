@@ -4,3 +4,6 @@ bin/
 .env.*
 .vscode/
 *.class
+.mcp-gateway/
+credentials.enc
+master.key

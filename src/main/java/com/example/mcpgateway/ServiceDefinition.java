@@ -10,7 +10,8 @@ public record ServiceDefinition(
         List<String> tags,
         String transport,
         Map<String, Object> clientConfig,
-        boolean requiresUserCredential
+        boolean requiresUserCredential,
+        List<CredentialRequirement> credentialRequirements
 ) {
     public static ServiceDefinition streamableHttp(
             String id,
@@ -20,6 +21,18 @@ public record ServiceDefinition(
             String url,
             boolean requiresUserCredential
     ) {
+        return streamableHttp(id, name, description, tags, url, requiresUserCredential, List.of());
+    }
+
+    public static ServiceDefinition streamableHttp(
+            String id,
+            String name,
+            String description,
+            List<String> tags,
+            String url,
+            boolean requiresUserCredential,
+            List<CredentialRequirement> credentialRequirements
+    ) {
         return new ServiceDefinition(
                 id,
                 name,
@@ -27,7 +40,8 @@ public record ServiceDefinition(
                 tags,
                 "streamable-http",
                 Map.of("url", url),
-                requiresUserCredential
+                requiresUserCredential,
+                credentialRequirements
         );
     }
 
@@ -68,7 +82,8 @@ public record ServiceDefinition(
                         "workingDirectory", workingDirectory,
                         "timeoutMs", timeoutMs
                 ),
-                requiresUserCredential
+                requiresUserCredential,
+                List.of()
         );
     }
 }

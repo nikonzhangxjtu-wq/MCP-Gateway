@@ -30,10 +30,14 @@ public final class GatewayRuntime {
     }
 
     public static GatewayRuntime createDefault(DownstreamClientRegistry downstreamClients) {
+        return createDefault(downstreamClients, new CredentialStore());
+    }
+
+    public static GatewayRuntime createDefault(DownstreamClientRegistry downstreamClients, CredentialStore credentialStore) {
         return new GatewayRuntime(
                 new ServiceRegistry(),
                 new CapabilityIndex(),
-                new CredentialStore(),
+                credentialStore,
                 new PermissionService(),
                 downstreamClients
         );
@@ -44,6 +48,10 @@ public final class GatewayRuntime {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "No downstream MCP client for service: " + service.id()));
         services.register(service);
+        if (service.requiresUserCredential() && !service.credentialRequirements().isEmpty()) {
+            capabilities.markAuthRequired(service);
+            return;
+        }
         try {
             capabilities.index(service, client);
         } catch (RuntimeException error) {
@@ -72,6 +80,18 @@ public final class GatewayRuntime {
                         java.util.Map.of("service_id", "string")),
                 new ToolSchema("get_auth_status",
                         "Check whether the current user has credentials for a service",
+                        java.util.Map.of("service_id", "string")),
+                new ToolSchema("get_credential_requirements",
+                        "Describe credentials required by one MCP service",
+                        java.util.Map.of("service_id", "string")),
+                new ToolSchema("submit_mcp_credential",
+                        "Submit a user credential for one MCP service",
+                        java.util.Map.of("service_id", "string", "credential_type", "string", "credential_value", "string")),
+                new ToolSchema("delete_mcp_credential",
+                        "Delete the current user's credential for one MCP service",
+                        java.util.Map.of("service_id", "string")),
+                new ToolSchema("refresh_mcp_service",
+                        "Refresh one MCP service capability index after credentials are configured",
                         java.util.Map.of("service_id", "string")),
                 new ToolSchema("call_mcp_tool",
                         "Call a tool on a selected downstream MCP service",
@@ -109,15 +129,103 @@ public final class GatewayRuntime {
         boolean requiresUserCredential = service
                 .map(ServiceDefinition::requiresUserCredential)
                 .orElse(true);
+        boolean indexed = capabilities.indexed(serviceId);
         boolean callable = service.isPresent()
                 && permissions.canUseService(user, serviceId)
-                && (!requiresUserCredential || hasCredential);
+                && (!requiresUserCredential || hasCredential)
+                && indexed;
         return Map.of(
                 "service_id", serviceId,
                 "requires_user_credential", requiresUserCredential,
                 "has_credential", hasCredential,
-                "callable", callable
+                "callable", callable,
+                "indexed", indexed,
+                "last_error", capabilities.lastError(serviceId).orElse(""),
+                "next_action", nextAuthAction(requiresUserCredential, hasCredential, indexed)
         );
+    }
+
+    public Map<String, Object> credentialRequirements(UserContext user, String serviceId) {
+        Optional<ServiceDefinition> service = services.get(serviceId);
+        if (service.isEmpty() || !permissions.canDiscover(user, serviceId)) {
+            return Map.of("service_id", serviceId, "requirements", List.of());
+        }
+        return Map.of(
+                "service_id", serviceId,
+                "requirements", service.get().credentialRequirements().stream()
+                        .map(requirement -> Map.of(
+                                "name", requirement.name(),
+                                "description", requirement.description(),
+                                "secret", requirement.secret()
+                        ))
+                        .toList()
+        );
+    }
+
+    public ToolCallResult submitCredential(UserContext user, String serviceId, String credentialType, String credentialValue) {
+        Optional<ServiceDefinition> service = services.get(serviceId);
+        if (service.isEmpty()) {
+            return ToolCallResult.denied("service_not_found", "MCP service is not registered");
+        }
+        if (!permissions.canUseService(user, serviceId)) {
+            return ToolCallResult.denied("permission_denied", "User cannot configure this MCP service");
+        }
+        boolean allowedType = service.get().credentialRequirements().stream()
+                .anyMatch(requirement -> requirement.name().equals(credentialType));
+        if (!allowedType) {
+            return ToolCallResult.denied("invalid_credential_type", "Credential type is not required by this service");
+        }
+        credentials.put(user.userId(), user.tenantId(), serviceId, new Credential(credentialType, credentialValue));
+        return ToolCallResult.success(Map.of(
+                "service_id", serviceId,
+                "credential_type", credentialType,
+                "stored", true,
+                "masked", mask(credentialValue),
+                "next_action", "refresh_mcp_service"
+        ));
+    }
+
+    public ToolCallResult deleteCredential(UserContext user, String serviceId) {
+        if (!permissions.canUseService(user, serviceId)) {
+            return ToolCallResult.denied("permission_denied", "User cannot configure this MCP service");
+        }
+        credentials.delete(user.userId(), user.tenantId(), serviceId);
+        services.get(serviceId)
+                .filter(service -> service.requiresUserCredential() && !service.credentialRequirements().isEmpty())
+                .ifPresent(capabilities::markAuthRequired);
+        return ToolCallResult.success(Map.of(
+                "service_id", serviceId,
+                "deleted", true,
+                "next_action", "submit_mcp_credential"
+        ));
+    }
+
+    public ToolCallResult refreshService(UserContext user, String serviceId) {
+        Optional<ServiceDefinition> service = services.get(serviceId);
+        if (service.isEmpty()) {
+            return ToolCallResult.denied("service_not_found", "MCP service is not registered");
+        }
+        if (!permissions.canUseService(user, serviceId)) {
+            return ToolCallResult.denied("permission_denied", "User cannot refresh this MCP service");
+        }
+        Optional<Credential> credential = credentials.get(user.userId(), user.tenantId(), serviceId);
+        if (service.get().requiresUserCredential() && credential.isEmpty()) {
+            return ToolCallResult.denied("auth_required", "User credential is required for this MCP service");
+        }
+        McpClient client = downstreamClients.get(serviceId)
+                .orElseThrow(() -> new IllegalStateException("No downstream MCP client for service: " + serviceId));
+        try {
+            capabilities.index(service.get(), client, credential.orElse(null));
+            return ToolCallResult.success(Map.of(
+                    "service_id", serviceId,
+                    "indexed", true,
+                    "tool_count", capabilities.toolsForService(serviceId).size(),
+                    "next_action", "list_mcp_tools"
+            ));
+        } catch (RuntimeException error) {
+            capabilities.markFailed(service.get(), error);
+            return ToolCallResult.denied("downstream_error", error.getMessage());
+        }
     }
 
     public ToolCallResult callTool(UserContext user, ToolCallRequest request) {
@@ -126,11 +234,6 @@ public final class GatewayRuntime {
             return ToolCallResult.denied("service_not_found",
                     "MCP service is not registered");
         }
-        if (!capabilities.available(request.serviceId())) {
-            return ToolCallResult.denied("service_unavailable",
-                    capabilities.lastError(request.serviceId()).orElse("MCP service is unavailable"));
-        }
-
         // The gateway checks service and tool scopes before any downstream traffic is sent.
         if (!permissions.canUseService(user, request.serviceId())
                 || !permissions.canCallTool(user, request.serviceId(), request.toolName())) {
@@ -143,6 +246,14 @@ public final class GatewayRuntime {
         if (service.get().requiresUserCredential() && credential.isEmpty()) {
             return ToolCallResult.denied("auth_required",
                     "User credential is required for this MCP service");
+        }
+        if (!capabilities.available(request.serviceId())) {
+            return ToolCallResult.denied("service_unavailable",
+                    capabilities.lastError(request.serviceId()).orElse("MCP service is unavailable"));
+        }
+        if (!capabilities.indexed(request.serviceId())) {
+            return ToolCallResult.denied("service_not_indexed",
+                    "Refresh this MCP service after configuring credentials");
         }
 
         McpClient client = downstreamClients.get(request.serviceId())
@@ -182,6 +293,24 @@ public final class GatewayRuntime {
                 .filter(toolName -> normalize(toolName).endsWith("_" + normalizedRequested))
                 .toList();
         return suffixMatches.size() == 1 ? suffixMatches.get(0) : requestedToolName;
+    }
+
+    private String nextAuthAction(boolean requiresUserCredential, boolean hasCredential, boolean indexed) {
+        if (requiresUserCredential && !hasCredential) {
+            return "submit_mcp_credential";
+        }
+        if (!indexed) {
+            return "refresh_mcp_service";
+        }
+        return "call_mcp_tool";
+    }
+
+    private String mask(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        int visible = Math.min(4, value.length());
+        return "****" + value.substring(value.length() - visible);
     }
 
     private ServiceSummary summaryFor(ServiceDefinition service) {

@@ -17,6 +17,17 @@ public final class CapabilityIndex {
         errorByService.remove(service.id());
     }
 
+    public void index(ServiceDefinition service, McpClient client, Credential credential) {
+        toolsByService.put(service.id(), List.copyOf(client.listTools(credential)));
+        syncedAtByService.put(service.id(), Instant.now());
+        errorByService.remove(service.id());
+    }
+
+    public void markAuthRequired(ServiceDefinition service) {
+        toolsByService.put(service.id(), List.of());
+        errorByService.put(service.id(), "auth_required");
+    }
+
     public void markFailed(ServiceDefinition service, Exception error) {
         toolsByService.put(service.id(), List.of());
         errorByService.put(service.id(), error.getMessage());
@@ -35,6 +46,10 @@ public final class CapabilityIndex {
     }
 
     public boolean available(String serviceId) {
-        return !errorByService.containsKey(serviceId);
+        return !errorByService.containsKey(serviceId) || "auth_required".equals(errorByService.get(serviceId));
+    }
+
+    public boolean indexed(String serviceId) {
+        return toolsByService.containsKey(serviceId) && !errorByService.containsKey(serviceId);
     }
 }

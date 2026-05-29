@@ -97,9 +97,10 @@ Optional environment variables:
 The `real-mcp` Spring profile can connect to real downstream MCP services. It includes a remote AMap MCP service over Streamable HTTP and local stdio MCP servers for Fetch, Filesystem, and Time:
 
 ```bash
-export AMAP_MAPS_API_KEY='...'
 mvn spring-boot:run -Dspring-boot.run.profiles=real-mcp
 ```
+
+AMap no longer requires `AMAP_MAPS_API_KEY` at process startup. Submit the user's AMap key through the gateway catalog tool `submit_mcp_credential`, then call `refresh_mcp_service`.
 
 Then run scripted agent checks:
 
@@ -117,12 +118,11 @@ This is the main end-to-end validation path for the current phase.
 
 ### Start the Gateway
 
-Start the gateway on a stable local port. Do not write the AMap key into source files.
+Start the gateway on a stable local port. Do not write the AMap key into source files or shell startup scripts.
 
 ```bash
 cd /Users/nikonzhang/shixi/mcp-gateway/Unla/java-mcp-gateway
 
-export AMAP_MAPS_API_KEY='...'
 mvn spring-boot:run \
   -Dspring-boot.run.profiles=real-mcp \
   -Dspring-boot.run.arguments=--server.port=8091
@@ -169,6 +169,10 @@ Cursor should see only the gateway catalog tools first:
 - `describe_mcp_service`
 - `list_mcp_tools`
 - `get_auth_status`
+- `get_credential_requirements`
+- `submit_mcp_credential`
+- `delete_mcp_credential`
+- `refresh_mcp_service`
 - `call_mcp_tool`
 
 It should not directly see all AMap tools at the top level. AMap tools are discovered only after Cursor calls:
@@ -211,9 +215,14 @@ Expected behavior:
 
 ```text
 search_mcp_services(query="高德地图")
+get_auth_status(service_id="amap")
+submit_mcp_credential(service_id="amap", credential_type="api_key", credential_value="<用户高德Key>")
+refresh_mcp_service(service_id="amap")
 list_mcp_tools(service_id="amap")
 call_mcp_tool(service_id="amap", tool_name="maps_weather", city="西安市")
 ```
+
+If the AMap key has already been submitted and refreshed, Cursor can skip the credential steps and directly list/call AMap tools.
 
 Ask Cursor:
 
@@ -251,6 +260,33 @@ curl -s http://127.0.0.1:8091/mcp \
   -d '{"jsonrpc":"2.0","id":"search","method":"tools/call","params":{"name":"search_mcp_services","arguments":{"query":"高德地图"}}}'
 ```
 
+Check required AMap credentials:
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"requirements","method":"tools/call","params":{"name":"get_credential_requirements","arguments":{"service_id":"amap"}}}'
+```
+
+Submit an AMap API key:
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"submit","method":"tools/call","params":{"name":"submit_mcp_credential","arguments":{"service_id":"amap","credential_type":"api_key","credential_value":"你的高德Key"}}}'
+```
+
+Refresh AMap after submitting the key:
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"refresh","method":"tools/call","params":{"name":"refresh_mcp_service","arguments":{"service_id":"amap"}}}'
+```
+
 List AMap tools with full schemas:
 
 ```bash
@@ -270,6 +306,7 @@ curl -s http://127.0.0.1:8091/mcp \
 ```
 
 See [CURSOR_GATEWAY_VALIDATION.zh-CN.md](CURSOR_GATEWAY_VALIDATION.zh-CN.md) for the full Chinese validation guide.
+See [USER_CREDENTIAL_FLOW.zh-CN.md](USER_CREDENTIAL_FLOW.zh-CN.md) for the user credential submission and encrypted local storage design.
 See [STAGE_SUMMARY_CURSOR_AMAP.zh-CN.md](STAGE_SUMMARY_CURSOR_AMAP.zh-CN.md) for the current stage summary, including the Cursor AMap weather, route planning, and service discovery validation.
 
 ## Common Questions
@@ -284,10 +321,10 @@ See [STAGE_SUMMARY_CURSOR_AMAP.zh-CN.md](STAGE_SUMMARY_CURSOR_AMAP.zh-CN.md) for
   This prototype keeps a small in-memory `PermissionService`. In production, the gateway should call the company runtime/IAM/AuthZ service and cache decisions carefully.
 
 - Where should real credentials live?
-  This prototype uses `CredentialStore` in memory. Production should use encrypted storage or Vault/KMS, never plain process memory as the only source of truth.
+  This prototype uses local AES-GCM encrypted storage at `~/.mcp-gateway/credentials.enc`, protected by `~/.mcp-gateway/master.key`. Production should replace this with Vault/KMS or the company credential service.
 
 - Cursor says `Not connected`.
   The gateway process was probably restarted or stopped after Cursor connected. Verify `http://127.0.0.1:8091/mcp` is alive, then reload/reconnect `java-mcp-gateway` in Cursor's MCP settings.
 
 - AMap appears but `tool_count` is `0`.
-  The gateway likely started without a valid `AMAP_MAPS_API_KEY`, so it could register the service but could not index AMap tools. Export the key and restart the gateway, then reload the MCP server in Cursor.
+  The user has not submitted an AMap `api_key`, or submitted it but has not called `refresh_mcp_service`. Use `get_credential_requirements`, then `submit_mcp_credential`, then `refresh_mcp_service`.
