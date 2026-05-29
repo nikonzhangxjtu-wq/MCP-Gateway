@@ -162,7 +162,7 @@ mkdir -p .cursor
 如果 Gateway 重启过，Cursor 可能仍保留旧连接状态，需要在 Cursor MCP 页面重新 Reload。
 
 ## 5. Cursor 调用高德 MCP 流程图
-
+当前步骤未来会继续调整，预计进行简化，在内部完成查状态 -> 缺凭证就返回需要什么 -> 有凭证就刷新 -> 返回可调用状态，下面展示了整体的逻辑图
 下面这张图描述 Cursor 通过 `java-mcp-gateway` 调用高德 MCP 的完整链路。重点是：Cursor 只连接 Gateway，不直接连接高德；高德工具由 Gateway 按需发现和转发。
 
 ```mermaid
