@@ -76,6 +76,36 @@ class McpGatewayIntegrationTest {
         assertThat(response.toString()).contains("permission_denied");
     }
 
+    @Test
+    void internalStatusExposesOperationalServiceStateWithoutCredentials() {
+        Map<String, Object> response = restTemplate.getForObject(
+                "http://localhost:" + port + "/internal/status",
+                Map.class
+        );
+
+        assertThat(response)
+                .containsEntry("name", "java-mcp-gateway")
+                .containsKeys("service_count", "indexed_count", "services");
+        assertThat(response.toString())
+                .contains("feishu")
+                .contains("tool_count")
+                .doesNotContain("mock-feishu-user-token");
+    }
+
+    @Test
+    void actuatorHealthIncludesGatewayReadinessDetails() {
+        Map<String, Object> response = restTemplate.getForObject(
+                "http://localhost:" + port + "/actuator/health",
+                Map.class
+        );
+
+        assertThat(response).containsKey("status");
+        assertThat(response.toString())
+                .contains("mcpGateway")
+                .contains("service_count")
+                .contains("unavailable_count");
+    }
+
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> toolsFrom(Map<String, Object> response) {
         Map<String, Object> result = (Map<String, Object>) response.get("result");

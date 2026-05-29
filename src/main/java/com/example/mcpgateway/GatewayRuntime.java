@@ -145,6 +145,31 @@ public final class GatewayRuntime {
         );
     }
 
+    public Map<String, Object> operationalStatus() {
+        List<Map<String, Object>> serviceStatuses = services.list().stream()
+                .sorted(Comparator.comparing(ServiceDefinition::id))
+                .map(this::serviceOperationalStatus)
+                .toList();
+        long indexedCount = serviceStatuses.stream()
+                .filter(status -> Boolean.TRUE.equals(status.get("indexed")))
+                .count();
+        long authRequiredCount = serviceStatuses.stream()
+                .filter(status -> "auth_required".equals(status.get("state")))
+                .count();
+        long unavailableCount = serviceStatuses.stream()
+                .filter(status -> "unavailable".equals(status.get("state")))
+                .count();
+        return Map.of(
+                "name", "java-mcp-gateway",
+                "service_count", serviceStatuses.size(),
+                "indexed_count", indexedCount,
+                "auth_required_count", authRequiredCount,
+                "unavailable_count", unavailableCount,
+                "catalog_tool_count", catalogTools().size(),
+                "services", serviceStatuses
+        );
+    }
+
     public Map<String, Object> credentialRequirements(UserContext user, String serviceId) {
         Optional<ServiceDefinition> service = services.get(serviceId);
         if (service.isEmpty() || !permissions.canDiscover(user, serviceId)) {
@@ -324,6 +349,41 @@ public final class GatewayRuntime {
                 capabilities.available(service.id()),
                 capabilities.lastError(service.id()).orElse("")
         );
+    }
+
+    private Map<String, Object> serviceOperationalStatus(ServiceDefinition service) {
+        Map<String, Object> status = new LinkedHashMap<>();
+        String lastError = capabilities.lastError(service.id()).orElse("");
+        status.put("id", service.id());
+        status.put("name", service.name());
+        status.put("transport", service.transport());
+        status.put("requires_user_credential", service.requiresUserCredential());
+        status.put("available", capabilities.available(service.id()));
+        status.put("indexed", capabilities.indexed(service.id()));
+        status.put("tool_count", capabilities.toolsForService(service.id()).size());
+        status.put("last_error", lastError);
+        status.put("last_synced_at", lastSyncedAt(service.id()));
+        status.put("state", operationalState(service.id(), lastError));
+        return status;
+    }
+
+    private String operationalState(String serviceId, String lastError) {
+        if (capabilities.indexed(serviceId)) {
+            return "indexed";
+        }
+        if ("auth_required".equals(lastError)) {
+            return "auth_required";
+        }
+        if (!lastError.isBlank()) {
+            return "unavailable";
+        }
+        return "registered";
+    }
+
+    private String lastSyncedAt(String serviceId) {
+        return capabilities.lastSyncedAt(serviceId) == null
+                ? ""
+                : capabilities.lastSyncedAt(serviceId).toString();
     }
 
     private boolean matches(ServiceDefinition service, String query) {
