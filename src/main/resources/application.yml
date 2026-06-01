@@ -1,6 +1,33 @@
 server:
   port: 8088
 
+mcp:
+  gateway:
+    services:
+      - id: feishu
+        name: Feishu MCP
+        description: Mock Feishu collaboration service for local MCP gateway validation
+        tags: [feishu, messaging, docs]
+        transport: streamable-http
+        url: /mock/feishu/mcp
+        timeoutMs: 15000
+        requiresUserCredential: true
+        bootstrapTools: feishu
+        defaultCredentials:
+          - userId: alice
+            tenantId: default
+            type: bearer
+            value: mock-feishu-user-token
+      - id: sandbox
+        name: Sandbox MCP
+        description: Manage isolated Docker sandboxes for agent runs
+        tags: [sandbox, docker, runtime, agent, 沙盒, 隔离]
+        transport: streamable-http
+        url: /sandbox/mcp
+        timeoutMs: 30000
+        requiresUserCredential: false
+        bootstrapTools: sandbox
+
 management:
   endpoints:
     web:

@@ -41,7 +41,7 @@ public record ServiceDefinition(
                 "streamable-http",
                 Map.of("url", url),
                 requiresUserCredential,
-                credentialRequirements
+                List.copyOf(credentialRequirements)
         );
     }
 

@@ -602,11 +602,44 @@ python3 agent/deepseek_agent.py --deepseek \
 
 ## 12. 已接入服务
 
-`real-mcp` profile 下的服务配置来自：
+当前 Gateway 的服务注册已经统一收敛到配置文件，不再在 Java 代码里固定注册某个下游 MCP 服务。
+
+默认 profile 的服务配置来自：
+
+```text
+src/main/resources/application.yml
+```
+
+`real-mcp` profile 的服务配置来自：
 
 ```text
 src/main/resources/application-real-mcp.yml
 ```
+
+新增 MCP 服务时，优先只修改：
+
+```yaml
+mcp:
+  gateway:
+    services:
+      - id: your-service-id
+        name: Your MCP
+        description: Your downstream MCP service
+        tags: [your, tags]
+        transport: streamable-http # 或 stdio
+        url: https://example.com/mcp
+        timeoutMs: 20000
+        requiresUserCredential: false
+        enabled: true
+```
+
+如果是 `stdio` 服务，则使用 `command`、`args`、`env`、`workingDirectory` 替代 `url`。如果是本地同进程测试服务，例如 `feishu` mock 或 `sandbox`，可以额外配置 `bootstrapTools`，让 Gateway 启动时不依赖 HTTP 自调用也能拿到工具 schema：
+
+```yaml
+bootstrapTools: sandbox
+```
+
+这里的 `bootstrapTools` 只是本地开发阶段的工具 schema 提供器，不是服务注册来源。服务是否存在、是否启用、名称、标签、地址、协议类型，都以 `mcp.gateway.services` 配置为准。
 
 | Service ID | 类型 | 说明 |
 | --- | --- | --- |
@@ -615,15 +648,75 @@ src/main/resources/application-real-mcp.yml
 | `filesystem` | stdio | 读写 `./sandbox` 目录，依赖 `npx @modelcontextprotocol/server-filesystem` |
 | `time` | stdio | 查询当前时间和时区转换，依赖 `uvx mcp-server-time` |
 | `feishu` | HTTP mock | 本地 Mock 飞书 MCP，用于验证转发和权限模型 |
+| `sandbox` | Streamable HTTP | 本地 Sandbox MCP Service，提供 `connect`、`disconnect`、`status` |
 | `github` | stdio | 当前配置为 `enabled:false`，暂不参与验收 |
 
-## 13. 关键源码位置
+## 13. Sandbox MCP Service
+
+当前版本内置了第一版 Sandbox MCP Service，入口为：
+
+```text
+POST http://127.0.0.1:8091/sandbox/mcp
+```
+
+Gateway 会把它注册成标准下游 MCP 服务：
+
+```text
+service_id = sandbox
+```
+
+第一版只暴露三个工具：
+
+| Tool | 说明 |
+| --- | --- |
+| `connect` | 基于 `tenant_id + user_id + agent_id + run_id` 懒加载创建或复用 sandbox |
+| `status` | 查询当前 agent run 的 sandbox 状态 |
+| `disconnect` | 停止并释放当前 agent run 绑定的 sandbox |
+
+默认后端为 `in-memory`，用于本地和测试环境稳定验证 MCP 链路。需要真实拉起 Docker container 时，启动前设置：
+
+```bash
+export SANDBOX_BACKEND=docker-cli
+```
+
+然后启动 Gateway。`docker-cli` 后端会使用 `python:3.11-slim` 作为 `cpu-python` profile 的基础镜像。
+
+通过 Gateway 调用 sandbox：
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"sandbox-connect","method":"tools/call","params":{"name":"call_mcp_tool","arguments":{"service_id":"sandbox","tool_name":"connect","tenant_id":"default","user_id":"alice","agent_id":"agent-001","run_id":"run-001","profile":"cpu-python"}}}'
+```
+
+查询状态：
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"sandbox-status","method":"tools/call","params":{"name":"call_mcp_tool","arguments":{"service_id":"sandbox","tool_name":"status","tenant_id":"default","user_id":"alice","agent_id":"agent-001","run_id":"run-001"}}}'
+```
+
+断开并释放：
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"sandbox-disconnect","method":"tools/call","params":{"name":"call_mcp_tool","arguments":{"service_id":"sandbox","tool_name":"disconnect","tenant_id":"default","user_id":"alice","agent_id":"agent-001","run_id":"run-001"}}}'
+```
+
+## 14. 关键源码位置
 
 | 文件 | 说明 |
 | --- | --- |
 | `src/main/java/com/example/mcpgateway/McpGatewayController.java` | HTTP `/mcp` 入口 |
 | `src/main/java/com/example/mcpgateway/GatewayStatusController.java` | `/internal/status` 运维状态入口 |
 | `src/main/java/com/example/mcpgateway/McpGatewayHealthIndicator.java` | Actuator 自定义健康检查 |
+| `src/main/java/com/example/mcpgateway/SandboxMcpController.java` | Sandbox MCP Service `/sandbox/mcp` 入口 |
+| `src/main/java/com/example/mcpgateway/SandboxRuntime.java` | Sandbox lazy connect、status、disconnect 核心逻辑 |
 | `src/main/java/com/example/mcpgateway/McpJsonRpcHandler.java` | MCP JSON-RPC 方法分发 |
 | `src/main/java/com/example/mcpgateway/GatewayRuntime.java` | 服务发现、权限、凭证、路由核心逻辑 |
 | `src/main/java/com/example/mcpgateway/CapabilityIndex.java` | 下游 MCP 工具能力索引 |
@@ -632,7 +725,7 @@ src/main/resources/application-real-mcp.yml
 | `src/main/java/com/example/mcpgateway/EncryptedFileCredentialStore.java` | 本地加密凭证存储 |
 | `src/main/resources/application-real-mcp.yml` | 真实 MCP 服务配置 |
 
-## 14. 测试覆盖
+## 15. 测试覆盖
 
 运行：
 
@@ -655,8 +748,11 @@ mvn test
 - 权限不足时能拒绝调用。
 - `/internal/status` 能返回服务状态并避免泄漏凭证明文。
 - `/actuator/health` 能返回 Gateway 自定义健康检查明细。
+- Sandbox MCP Service 支持 `connect`、`status`、`disconnect`。
+- 同一个 agent run 重复 connect 会复用 sandbox，不同 run 会创建不同 sandbox。
+- Gateway 能发现并转发调用 `service_id=sandbox`。
 
-## 15. 常见问题
+## 16. 常见问题
 
 ### Cursor 显示 `Not connected`
 
@@ -695,7 +791,7 @@ refresh_mcp_service(service_id="amap")
 
 这是设计目标。Cursor 顶层只挂 Gateway catalog tools，避免所有下游 MCP tools 一次性进入上下文。Agent 需要先发现服务，再按需展开某个服务的工具。
 
-## 16. 当前边界
+## 17. 当前边界
 
 当前版本是阶段性原型，不是生产网关。还未完成：
 
@@ -708,7 +804,7 @@ refresh_mcp_service(service_id="amap")
 - MCP session header 生命周期管理。
 - 管理端 UI 和控制面配置下发。
 
-## 17. 更多中文文档
+## 18. 更多中文文档
 
 - [USER_CREDENTIAL_FLOW.zh-CN.md](USER_CREDENTIAL_FLOW.zh-CN.md)：用户凭证提交与本地加密存储设计。
 - [CURSOR_GATEWAY_VALIDATION.zh-CN.md](CURSOR_GATEWAY_VALIDATION.zh-CN.md)：Cursor 挂载 Gateway 的详细验收路线。

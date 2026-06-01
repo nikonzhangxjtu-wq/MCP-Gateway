@@ -20,27 +20,20 @@ public class GatewayConfiguration {
     }
 
     @Bean
-    GatewayRuntime gatewayRuntime(RestTemplate restTemplate, McpServiceCatalogProperties properties) {
-        List<ToolSchema> feishuTools = MockFeishuMcpController.feishuTools();
-        DownstreamClientRegistry downstreamClients = new DownstreamClientRegistry();
-        downstreamClients.register("feishu", new StreamableHttpMcpClient(
-                "/mock/feishu/mcp",
-                restTemplate,
-                feishuTools
-        ));
+    SandboxRuntime sandboxRuntime() {
+        String backend = System.getenv().getOrDefault("SANDBOX_BACKEND", "in-memory");
+        SandboxContainerBackend containerBackend = "docker-cli".equals(backend)
+                ? new DockerCliSandboxContainerBackend()
+                : new InMemorySandboxContainerBackend();
+        return new SandboxRuntime(containerBackend);
+    }
 
+    @Bean
+    GatewayRuntime gatewayRuntime(RestTemplate restTemplate, McpServiceCatalogProperties properties) {
+        DownstreamClientRegistry downstreamClients = new DownstreamClientRegistry();
         GatewayRuntime runtime = GatewayRuntime.createDefault(downstreamClients, EncryptedFileCredentialStore.defaultStore());
-        runtime.registerService(ServiceDefinition.streamableHttp(
-                "feishu",
-                "Feishu MCP",
-                "Mock Feishu collaboration service for local MCP gateway validation",
-                List.of("feishu", "messaging", "docs"),
-                "/mock/feishu/mcp",
-                true
-        ));
-        runtime.credentials().put("alice", "default", "feishu",
-                new Credential("bearer", "mock-feishu-user-token"));
         registerConfiguredServices(properties, downstreamClients, runtime, restTemplate);
+        registerDefaultCredentials(properties, runtime);
         return runtime;
     }
 
@@ -62,7 +55,8 @@ public class GatewayConfiguration {
             if ("streamable-http".equals(service.getTransport())) {
                 downstreamClients.register(service.getId(), new StreamableHttpMcpClient(
                         service.getUrl(),
-                        restTemplate
+                        restTemplate,
+                        bootstrapTools(service)
                 ));
                 runtime.registerService(ServiceDefinition.streamableHttp(
                         service.getId(),
@@ -110,5 +104,34 @@ public class GatewayConfiguration {
                         requirement.isSecret()
                 ))
                 .toList();
+    }
+
+    private void registerDefaultCredentials(McpServiceCatalogProperties properties, GatewayRuntime runtime) {
+        for (McpServiceCatalogProperties.ServiceConfig service : properties.getServices()) {
+            for (McpServiceCatalogProperties.DefaultCredentialConfig credential : service.getDefaultCredentials()) {
+                if (credential.getValue() == null || credential.getValue().isBlank()) {
+                    continue;
+                }
+                runtime.credentials().put(
+                        credential.getUserId(),
+                        credential.getTenantId(),
+                        service.getId(),
+                        new Credential(credential.getType(), credential.getValue())
+                );
+            }
+        }
+    }
+
+    private List<ToolSchema> bootstrapTools(McpServiceCatalogProperties.ServiceConfig service) {
+        if (service.getBootstrapTools() == null || service.getBootstrapTools().isBlank()) {
+            return List.of();
+        }
+        if ("feishu".equals(service.getBootstrapTools())) {
+            return MockFeishuMcpController.feishuTools();
+        }
+        if ("sandbox".equals(service.getBootstrapTools())) {
+            return SandboxMcpController.sandboxTools();
+        }
+        throw new IllegalArgumentException("Unknown bootstrapTools provider: " + service.getBootstrapTools());
     }
 }

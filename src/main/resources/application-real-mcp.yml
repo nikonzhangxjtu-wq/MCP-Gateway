@@ -13,6 +13,20 @@ mcp:
           - name: api_key
             description: 高德开放平台 Web 服务 Key
             secret: true
+      - id: feishu
+        name: Feishu MCP
+        description: Mock Feishu collaboration service for local MCP gateway validation
+        tags: [feishu, messaging, docs]
+        transport: streamable-http
+        url: /mock/feishu/mcp
+        timeoutMs: 15000
+        requiresUserCredential: true
+        bootstrapTools: feishu
+        defaultCredentials:
+          - userId: alice
+            tenantId: default
+            type: bearer
+            value: mock-feishu-user-token
       - id: fetch
         name: Fetch MCP
         description: Fetch public web content
@@ -22,6 +36,15 @@ mcp:
         args: ["mcp-server-fetch"]
         timeoutMs: 20000
         requiresUserCredential: false
+      - id: sandbox
+        name: Sandbox MCP
+        description: Manage isolated Docker sandboxes for agent runs
+        tags: [sandbox, docker, runtime, agent, 沙盒, 隔离]
+        transport: streamable-http
+        url: /sandbox/mcp
+        timeoutMs: 30000
+        requiresUserCredential: false
+        bootstrapTools: sandbox
       - id: filesystem
         name: Filesystem MCP
         description: Read files from the local gateway sandbox

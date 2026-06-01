@@ -65,6 +65,45 @@ class McpGatewayIntegrationTest {
     }
 
     @Test
+    void gatewayDiscoversSandboxAndForwardsLifecycleCalls() {
+        Map<String, Object> search = callCatalogTool("alice", "search_mcp_services", Map.of("query", "sandbox"));
+        assertThat(contentText(search)).contains("sandbox").contains("Sandbox MCP");
+
+        Map<String, Object> listTools = callCatalogTool("alice", "list_mcp_tools", Map.of("service_id", "sandbox"));
+        assertThat(contentText(listTools)).contains("connect").contains("disconnect").contains("status");
+
+        Map<String, Object> connect = callCatalogTool("alice", "call_mcp_tool", Map.of(
+                "service_id", "sandbox",
+                "tool_name", "connect",
+                "tenant_id", "default",
+                "user_id", "alice",
+                "agent_id", "agent-a",
+                "run_id", "run-1",
+                "profile", "cpu-python"
+        ));
+        Map<String, Object> status = callCatalogTool("alice", "call_mcp_tool", Map.of(
+                "service_id", "sandbox",
+                "tool_name", "status",
+                "tenant_id", "default",
+                "user_id", "alice",
+                "agent_id", "agent-a",
+                "run_id", "run-1"
+        ));
+        Map<String, Object> disconnect = callCatalogTool("alice", "call_mcp_tool", Map.of(
+                "service_id", "sandbox",
+                "tool_name", "disconnect",
+                "tenant_id", "default",
+                "user_id", "alice",
+                "agent_id", "agent-a",
+                "run_id", "run-1"
+        ));
+
+        assertThat(contentText(connect)).contains("running").contains("created").contains("true");
+        assertThat(contentText(status)).contains("running");
+        assertThat(contentText(disconnect)).contains("stopped").contains("released").contains("true");
+    }
+
+    @Test
     void gatewayRejectsUnauthorizedToolCall() {
         Map<String, Object> response = callCatalogTool("bob", "call_mcp_tool", Map.of(
                 "service_id", "feishu",

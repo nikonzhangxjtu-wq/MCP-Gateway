@@ -55,7 +55,10 @@ public class McpGatewayController {
                 "mcp:github:*",
                 "mcp:time:discover",
                 "mcp:time:use",
-                "mcp:time:*"
+                "mcp:time:*",
+                "mcp:sandbox:discover",
+                "mcp:sandbox:use",
+                "mcp:sandbox:*"
         ));
     }
 }

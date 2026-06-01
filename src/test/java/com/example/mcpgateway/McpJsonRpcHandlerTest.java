@@ -9,6 +9,23 @@ import org.junit.jupiter.api.Test;
 
 class McpJsonRpcHandlerTest {
     @Test
+    void topLevelToolsUseJsonSchemaInputSchema() {
+        McpJsonRpcHandler handler = new McpJsonRpcHandler(GatewayRuntime.createDefault(new DownstreamClientRegistry()));
+
+        Map<String, Object> response = handler.handle(new UserContext("alice", "default", "agent-test", List.of()), Map.of(
+                "jsonrpc", "2.0",
+                "id", "tools",
+                "method", "tools/list",
+                "params", Map.of()
+        ));
+
+        assertThat(response.toString())
+                .contains("inputSchema")
+                .contains("type=object")
+                .contains("properties={query={type=string}}");
+    }
+
+    @Test
     void listMcpToolsReturnsStructuredToolObjects() {
         DownstreamClientRegistry downstream = new DownstreamClientRegistry();
         downstream.register("amap", new InMemoryMcpClient(List.of(

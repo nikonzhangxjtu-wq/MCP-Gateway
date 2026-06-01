@@ -31,6 +31,8 @@ public class McpServiceCatalogProperties {
         private long timeoutMs = 10000;
         private boolean requiresUserCredential;
         private List<CredentialRequirementConfig> credentialRequirements = List.of();
+        private List<DefaultCredentialConfig> defaultCredentials = List.of();
+        private String bootstrapTools;
         private boolean enabled = true;
 
         public String getId() {
@@ -137,6 +139,22 @@ public class McpServiceCatalogProperties {
             this.credentialRequirements = credentialRequirements;
         }
 
+        public List<DefaultCredentialConfig> getDefaultCredentials() {
+            return defaultCredentials;
+        }
+
+        public void setDefaultCredentials(List<DefaultCredentialConfig> defaultCredentials) {
+            this.defaultCredentials = defaultCredentials;
+        }
+
+        public String getBootstrapTools() {
+            return bootstrapTools;
+        }
+
+        public void setBootstrapTools(String bootstrapTools) {
+            this.bootstrapTools = bootstrapTools;
+        }
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -173,6 +191,45 @@ public class McpServiceCatalogProperties {
 
         public void setSecret(boolean secret) {
             this.secret = secret;
+        }
+    }
+
+    public static class DefaultCredentialConfig {
+        private String userId = "alice";
+        private String tenantId = "default";
+        private String type = "bearer";
+        private String value;
+
+        public String getUserId() {
+            return userId;
+        }
+
+        public void setUserId(String userId) {
+            this.userId = userId;
+        }
+
+        public String getTenantId() {
+            return tenantId;
+        }
+
+        public void setTenantId(String tenantId) {
+            this.tenantId = tenantId;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        public String getValue() {
+            return value;
+        }
+
+        public void setValue(String value) {
+            this.value = value;
         }
     }
 }

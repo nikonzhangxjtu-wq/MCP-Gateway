@@ -10,20 +10,7 @@ public final class PermissionService {
     }
 
     public boolean canCallTool(UserContext user, String serviceId, String toolName) {
-        if ("github".equals(serviceId) && isWriteLike(toolName)) {
-            return false;
-        }
         return user.hasScope("mcp:" + serviceId + ":" + toolName)
                 || user.hasScope("mcp:" + serviceId + ":*");
-    }
-
-    private boolean isWriteLike(String toolName) {
-        String normalized = toolName == null ? "" : toolName.toLowerCase(java.util.Locale.ROOT);
-        return normalized.contains("create")
-                || normalized.contains("update")
-                || normalized.contains("delete")
-                || normalized.contains("merge")
-                || normalized.contains("push")
-                || normalized.contains("write");
     }
 }

@@ -1,11 +1,11 @@
 package com.example.mcpgateway;
 
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
 public class CredentialStore {
-    private final Map<String, Credential> credentials = new LinkedHashMap<>();
+    private final Map<String, Credential> credentials = new HashMap<>();
 
     public void put(String userId, String tenantId, String serviceId, Credential credential) {
         credentials.put(key(userId, tenantId, serviceId), credential);

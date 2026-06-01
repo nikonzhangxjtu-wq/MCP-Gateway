@@ -1,6 +1,7 @@
 package com.example.mcpgateway;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class McpJsonRpcHandler {
@@ -107,9 +108,29 @@ public final class McpJsonRpcHandler {
                 .map(tool -> Map.<String, Object>of(
                         "name", tool.name(),
                         "description", tool.description(),
-                        "inputSchema", tool.inputSchema()
+                        "inputSchema", normalizeInputSchema(tool.inputSchema())
                 ))
                 .toList();
+    }
+
+    private static Map<String, Object> normalizeInputSchema(Map<String, Object> inputSchema) {
+        if ("object".equals(inputSchema.get("type")) && inputSchema.get("properties") instanceof Map<?, ?>) {
+            return inputSchema;
+        }
+        Map<String, Object> properties = new LinkedHashMap<>();
+        inputSchema.forEach((name, type) -> properties.put(name, schemaProperty(type)));
+        return Map.of(
+                "type", "object",
+                "properties", properties
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> schemaProperty(Object type) {
+        if (type instanceof Map<?, ?> map) {
+            return (Map<String, Object>) map;
+        }
+        return Map.of("type", String.valueOf(type));
     }
 
     private static Map<String, Object> serviceSummary(ServiceSummary summary, List<ToolSchema> tools) {
