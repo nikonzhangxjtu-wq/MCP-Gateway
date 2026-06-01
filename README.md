@@ -8,14 +8,33 @@
 Unla/java-mcp-gateway
 ```
 
-## 1. 当前完成的能力
+## 1. 当前定位与完成能力
+
+当前版本定位为第一版 MCP Gateway 数据面组件，核心目标是：
+
+```text
+Cursor / Agent 只挂载一个 MCP Gateway，
+Gateway 负责发现多个下游 MCP 服务，并把工具调用稳定转发到对应 MCP Server。
+```
+
+第一版核心验收范围只包含：
+
+- 服务注册。
+- 服务发现。
+- 能力索引。
+- 路由转发。
+- 错误隔离。
+- 状态观测。
+
+权限、凭证、复杂控制面、数据库服务目录、Web 管理后台都不是第一版核心目标。当前代码里保留了最小权限/凭证能力，主要用于高德 Key、本地 Cursor 验证和后续扩展预留。
 
 当前版本重点验证 MCP Gateway 作为统一入口的可行性：
 
 - Gateway 对 Cursor/Agent 表现为一个 MCP Server。
 - Gateway 对下游 MCP 服务表现为 MCP Client/Router。
 - Cursor 顶层只看到少量 Gateway catalog tools，不直接暴露所有下游 MCP tools。
-- Gateway 支持 MCP 服务注册、服务发现、能力索引、权限检查、用户凭证检查和路由转发。
+- Gateway 支持 MCP 服务注册、服务发现、能力索引和路由转发。
+- Gateway 保留最小权限检查和用户凭证检查，用于第一版安全边界和高德 Key 验证。
 - 已接入高德官方远程 MCP，使用 Streamable HTTP 方式访问。
 - 高德 Key 不再要求启动前 `export AMAP_MAPS_API_KEY`，而是由用户通过 Cursor/Gateway 工具提交。
 - 用户凭证第一版使用本机 AES-GCM 加密文件存储。
@@ -25,11 +44,11 @@ Unla/java-mcp-gateway
 ```text
 Cursor / Agent
   -> POST /mcp
-  -> Java MCP Gateway
+       -> Java MCP Gateway
        -> Gateway catalog tools
-       -> PermissionService
-       -> CredentialStore
+       -> ServiceRegistry
        -> CapabilityIndex
+       -> DownstreamClientRegistry
        -> StreamableHttpMcpClient / StdioMcpClient
   -> AMap / Fetch / Filesystem / Time / Mock Feishu MCP
 ```
@@ -736,7 +755,12 @@ mvn test
 当前测试覆盖：
 
 - Gateway 顶层 `tools/list` 只暴露 catalog tools。
+- Gateway 顶层 tool schema 使用标准 JSON Schema，保证 Cursor 可以识别。
 - 服务发现能返回注册服务。
+- `call_mcp_tool` 支持扁平参数和嵌套 `arguments` 参数。
+- 未知工具名会在 Gateway 层返回 `tool_not_found`。
+- 缺少 `service_id` 或 `tool_name` 会返回 `invalid_arguments`。
+- 下游超时会返回 `downstream_timeout`，不再泛化为普通下游错误。
 - 高德无凭证时返回明确认证状态。
 - `get_credential_requirements` 能返回高德 `api_key` 要求。
 - `submit_mcp_credential` 能写入用户凭证。

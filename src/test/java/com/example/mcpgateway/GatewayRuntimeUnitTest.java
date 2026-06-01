@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.Map;
+import java.net.SocketTimeoutException;
 
 import org.junit.jupiter.api.Test;
 
@@ -37,6 +38,20 @@ class GatewayRuntimeUnitTest {
 
         assertThat(result.allowed()).isFalse();
         assertThat(result.errorCode()).isEqualTo("auth_required");
+    }
+
+    @Test
+    void missingServiceOrToolNameReturnsInvalidArguments() {
+        GatewayRuntime runtime = runtimeWithoutCredentials();
+        UserContext alice = new UserContext("alice", "default", "agent-test", List.of("mcp:feishu:*"));
+
+        ToolCallResult missingService = runtime.callTool(alice, new ToolCallRequest("", "send_message", Map.of()));
+        ToolCallResult missingTool = runtime.callTool(alice, new ToolCallRequest("feishu", "", Map.of()));
+
+        assertThat(missingService.allowed()).isFalse();
+        assertThat(missingService.errorCode()).isEqualTo("invalid_arguments");
+        assertThat(missingTool.allowed()).isFalse();
+        assertThat(missingTool.errorCode()).isEqualTo("invalid_arguments");
     }
 
     @Test
@@ -114,6 +129,42 @@ class GatewayRuntimeUnitTest {
     }
 
     @Test
+    void downstreamTimeoutReturnsDedicatedErrorCode() {
+        DownstreamClientRegistry downstream = new DownstreamClientRegistry();
+        downstream.register("slow", new McpClient() {
+            @Override
+            public List<ToolSchema> listTools() {
+                return List.of(new ToolSchema("wait", "Wait", Map.of()));
+            }
+
+            @Override
+            public String callTool(String serviceId, String toolName, Map<String, Object> arguments, Credential credential) {
+                throw new RuntimeException("read timed out", new SocketTimeoutException("Read timed out"));
+            }
+        });
+        GatewayRuntime runtime = GatewayRuntime.createDefault(downstream);
+        runtime.registerService(ServiceDefinition.streamableHttp(
+                "slow",
+                "Slow MCP",
+                "Times out on call",
+                List.of("slow"),
+                "/slow",
+                false
+        ));
+        UserContext alice = new UserContext("alice", "default", "agent-test", List.of(
+                "mcp:slow:discover",
+                "mcp:slow:use",
+                "mcp:slow:*"
+        ));
+
+        ToolCallResult result = runtime.callTool(alice, new ToolCallRequest("slow", "wait", Map.of()));
+
+        assertThat(result.allowed()).isFalse();
+        assertThat(result.errorCode()).isEqualTo("downstream_timeout");
+        assertThat(result.errorMessage()).contains("timed out");
+    }
+
+    @Test
     void callToolResolvesSimpleToolAliasBeforeForwarding() {
         RecordingMcpClient client = new RecordingMcpClient(List.of(
                 new ToolSchema("maps_weather", "Weather", Map.of("city", "string"))
@@ -143,6 +194,78 @@ class GatewayRuntimeUnitTest {
 
         assertThat(result.allowed()).isTrue();
         assertThat(client.lastToolName).isEqualTo("maps_weather");
+    }
+
+    @Test
+    void callToolUnwrapsNestedArgumentsBeforeForwarding() {
+        RecordingMcpClient client = new RecordingMcpClient(List.of(
+                new ToolSchema("fetch", "Fetch", Map.of("url", "string", "max_length", "integer"))
+        ));
+        DownstreamClientRegistry downstream = new DownstreamClientRegistry();
+        downstream.register("fetch", client);
+        GatewayRuntime runtime = GatewayRuntime.createDefault(downstream);
+        runtime.registerService(ServiceDefinition.streamableHttp(
+                "fetch",
+                "Fetch MCP",
+                "Fetch public web content",
+                List.of("fetch", "web"),
+                "/fetch",
+                false
+        ));
+        UserContext alice = new UserContext("alice", "default", "agent-test", List.of(
+                "mcp:fetch:discover",
+                "mcp:fetch:use",
+                "mcp:fetch:*"
+        ));
+
+        ToolCallResult result = runtime.callTool(alice, new ToolCallRequest(
+                "fetch",
+                "fetch",
+                Map.of(
+                        "service_id", "fetch",
+                        "tool_name", "fetch",
+                        "arguments", Map.of("url", "https://example.com", "max_length", 1000)
+                )
+        ));
+
+        assertThat(result.allowed()).isTrue();
+        assertThat(client.lastArguments)
+                .containsEntry("url", "https://example.com")
+                .containsEntry("max_length", 1000)
+                .doesNotContainKeys("service_id", "tool_name", "arguments");
+    }
+
+    @Test
+    void unknownToolReturnsClearGatewayErrorBeforeForwarding() {
+        RecordingMcpClient client = new RecordingMcpClient(List.of(
+                new ToolSchema("maps_weather", "Weather", Map.of("city", "string"))
+        ));
+        DownstreamClientRegistry downstream = new DownstreamClientRegistry();
+        downstream.register("amap", client);
+        GatewayRuntime runtime = GatewayRuntime.createDefault(downstream);
+        runtime.registerService(ServiceDefinition.streamableHttp(
+                "amap",
+                "AMap MCP",
+                "Official AMap remote MCP service",
+                List.of("amap", "高德"),
+                "https://mcp.amap.com/mcp",
+                false
+        ));
+        UserContext alice = new UserContext("alice", "default", "agent-test", List.of(
+                "mcp:amap:discover",
+                "mcp:amap:use",
+                "mcp:amap:*"
+        ));
+
+        ToolCallResult result = runtime.callTool(alice, new ToolCallRequest(
+                "amap",
+                "forecast",
+                Map.of("city", "北京")
+        ));
+
+        assertThat(result.allowed()).isFalse();
+        assertThat(result.errorCode()).isEqualTo("tool_not_found");
+        assertThat(client.lastToolName).isNull();
     }
 
     @Test
@@ -269,6 +392,7 @@ class GatewayRuntimeUnitTest {
     private static final class RecordingMcpClient implements McpClient {
         private final List<ToolSchema> tools;
         private String lastToolName;
+        private Map<String, Object> lastArguments;
 
         private RecordingMcpClient(List<ToolSchema> tools) {
             this.tools = tools;
@@ -282,6 +406,7 @@ class GatewayRuntimeUnitTest {
         @Override
         public String callTool(String serviceId, String toolName, Map<String, Object> arguments, Credential credential) {
             lastToolName = toolName;
+            lastArguments = arguments;
             return "ok";
         }
     }

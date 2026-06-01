@@ -6,9 +6,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
+import java.net.SocketTimeoutException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class GatewayRuntime {
+    private static final Logger LOGGER = LoggerFactory.getLogger(GatewayRuntime.class);
     private final ServiceRegistry services;
     private final CapabilityIndex capabilities;
     private final CredentialStore credentials;
@@ -254,31 +260,42 @@ public final class GatewayRuntime {
     }
 
     public ToolCallResult callTool(UserContext user, ToolCallRequest request) {
+        long started = System.nanoTime();
+        if (request.serviceId() == null || request.serviceId().isBlank()
+                || request.toolName() == null || request.toolName().isBlank()) {
+            return finishCall(user, request, started, ToolCallResult.denied("invalid_arguments",
+                    "service_id and tool_name are required"));
+        }
         Optional<ServiceDefinition> service = services.get(request.serviceId());
         if (service.isEmpty()) {
-            return ToolCallResult.denied("service_not_found",
-                    "MCP service is not registered");
+            return finishCall(user, request, started, ToolCallResult.denied("service_not_found",
+                    "MCP service is not registered"));
         }
         // The gateway checks service and tool scopes before any downstream traffic is sent.
         if (!permissions.canUseService(user, request.serviceId())
                 || !permissions.canCallTool(user, request.serviceId(), request.toolName())) {
-            return ToolCallResult.denied("permission_denied",
-                    "User cannot call this MCP tool");
+            return finishCall(user, request, started, ToolCallResult.denied("permission_denied",
+                    "User cannot call this MCP tool"));
         }
 
         Optional<Credential> credential = credentials.get(
                 user.userId(), user.tenantId(), request.serviceId());
         if (service.get().requiresUserCredential() && credential.isEmpty()) {
-            return ToolCallResult.denied("auth_required",
-                    "User credential is required for this MCP service");
+            return finishCall(user, request, started, ToolCallResult.denied("auth_required",
+                    "User credential is required for this MCP service"));
         }
         if (!capabilities.available(request.serviceId())) {
-            return ToolCallResult.denied("service_unavailable",
-                    capabilities.lastError(request.serviceId()).orElse("MCP service is unavailable"));
+            return finishCall(user, request, started, ToolCallResult.denied("service_unavailable",
+                    capabilities.lastError(request.serviceId()).orElse("MCP service is unavailable")));
         }
         if (!capabilities.indexed(request.serviceId())) {
-            return ToolCallResult.denied("service_not_indexed",
-                    "Refresh this MCP service after configuring credentials");
+            return finishCall(user, request, started, ToolCallResult.denied("service_not_indexed",
+                    "Refresh this MCP service after configuring credentials"));
+        }
+        Optional<String> resolvedToolName = resolveToolName(request.serviceId(), request.toolName());
+        if (resolvedToolName.isEmpty()) {
+            return finishCall(user, request, started, ToolCallResult.denied("tool_not_found",
+                    "Tool is not indexed for service " + request.serviceId() + ": " + request.toolName()));
         }
 
         McpClient client = downstreamClients.get(request.serviceId())
@@ -286,24 +303,50 @@ public final class GatewayRuntime {
                         "No downstream MCP client for service: " + request.serviceId()));
         try {
             String content = client.callTool(
-                    request.serviceId(), resolveToolName(request.serviceId(), request.toolName()),
+                    request.serviceId(), resolvedToolName.get(),
                     downstreamArguments(request.arguments()), credential.orElse(null));
-            return ToolCallResult.success(content);
+            return finishCall(user, request, started, ToolCallResult.success(content));
         } catch (RuntimeException error) {
-            return ToolCallResult.denied("downstream_error", error.getMessage());
+            return finishCall(user, request, started, downstreamFailure(error));
         }
+    }
+
+    private ToolCallResult downstreamFailure(RuntimeException error) {
+        if (isTimeout(error)) {
+            return ToolCallResult.denied("downstream_timeout", error.getMessage());
+        }
+        return ToolCallResult.denied("downstream_error", error.getMessage());
+    }
+
+    private boolean isTimeout(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof SocketTimeoutException || current instanceof TimeoutException) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase(Locale.ROOT).contains("timed out")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private Map<String, Object> downstreamArguments(Map<String, Object> arguments) {
         Map<String, Object> downstream = new LinkedHashMap<>(arguments);
+        Object nestedArguments = downstream.remove("arguments");
         downstream.remove("service_id");
         downstream.remove("serviceId");
         downstream.remove("tool_name");
         downstream.remove("toolName");
+        if (nestedArguments instanceof Map<?, ?> nested) {
+            nested.forEach((key, value) -> downstream.put(String.valueOf(key), value));
+        }
         return downstream;
     }
 
-    private String resolveToolName(String serviceId, String requestedToolName) {
+    private Optional<String> resolveToolName(String serviceId, String requestedToolName) {
         List<ToolSchema> tools = capabilities.toolsForService(serviceId);
         String normalizedRequested = normalize(requestedToolName);
         Optional<String> exact = tools.stream()
@@ -311,13 +354,29 @@ public final class GatewayRuntime {
                 .filter(toolName -> normalize(toolName).equals(normalizedRequested))
                 .findFirst();
         if (exact.isPresent()) {
-            return exact.get();
+            return exact;
         }
         List<String> suffixMatches = tools.stream()
                 .map(ToolSchema::name)
                 .filter(toolName -> normalize(toolName).endsWith("_" + normalizedRequested))
                 .toList();
-        return suffixMatches.size() == 1 ? suffixMatches.get(0) : requestedToolName;
+        return suffixMatches.size() == 1 ? Optional.of(suffixMatches.get(0)) : Optional.empty();
+    }
+
+    private ToolCallResult finishCall(UserContext user, ToolCallRequest request, long startedNanos, ToolCallResult result) {
+        long durationMs = (System.nanoTime() - startedNanos) / 1_000_000;
+        LOGGER.info(
+                "gateway_tool_call user_id={} tenant_id={} agent_id={} service_id={} tool_name={} duration_ms={} success={} error_code={}",
+                user.userId(),
+                user.tenantId(),
+                user.agentId(),
+                request.serviceId(),
+                request.toolName(),
+                durationMs,
+                result.allowed(),
+                result.errorCode() == null ? "" : result.errorCode()
+        );
+        return result;
     }
 
     private String nextAuthAction(boolean requiresUserCredential, boolean hasCredential, boolean indexed) {
