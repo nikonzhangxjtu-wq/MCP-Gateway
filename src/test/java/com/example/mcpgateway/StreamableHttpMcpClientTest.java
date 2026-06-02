@@ -6,11 +6,14 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 
@@ -76,5 +79,21 @@ class StreamableHttpMcpClientTest {
         client.listTools(new Credential("api_key", "secret-key"));
 
         server.verify();
+    }
+
+    @Test
+    void createsRestTemplateWithConfiguredTimeouts() throws Exception {
+        RestTemplate restTemplate = GatewayConfiguration.restTemplateWithTimeout(1234);
+
+        ClientHttpRequestFactory requestFactory = restTemplate.getRequestFactory();
+        assertThat(requestFactory).isInstanceOf(SimpleClientHttpRequestFactory.class);
+        assertThat(readIntField(requestFactory, "connectTimeout")).isEqualTo(1234);
+        assertThat(readIntField(requestFactory, "readTimeout")).isEqualTo(1234);
+    }
+
+    private int readIntField(Object target, String name) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.getInt(target);
     }
 }

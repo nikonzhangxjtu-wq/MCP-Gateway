@@ -190,7 +190,7 @@ flowchart LR
     BackendInterface --> MemoryBackend
     BackendInterface --> DockerBackend
 
-    DockerBackend --> DockerContainer["Docker 沙盒容器<br/>python:3.11-slim<br/>CPU only<br/>独立文件系统 / 独立进程空间"]
+    DockerBackend --> DockerContainer["Docker 沙盒容器<br/>cpu-python: python:3.11-slim<br/>ubuntu-basic: ubuntu:22.04<br/>CPU only<br/>独立文件系统 / 独立进程空间"]
 
     Runtime --> Logs["结构化日志<br/>operation / tenant_id / user_id<br/>agent_id / run_id<br/>sandbox_id / container_id<br/>duration_ms / success / error_code"]
 ```
@@ -224,7 +224,7 @@ flowchart LR
   "user_id": "alice",
   "agent_id": "agent-001",
   "run_id": "run-001",
-  "profile": "cpu-python",
+  "profile": "ubuntu-basic",
   "ttl_seconds": 3600
 }
 ```
@@ -259,8 +259,8 @@ reused=true
   "created": true,
   "reused": false,
   "workspace": "/workspace/sbx_1",
-  "profile": "cpu-python",
-  "image": "python:3.11-slim"
+  "profile": "ubuntu-basic",
+  "image": "ubuntu:22.04"
 }
 ```
 
@@ -399,7 +399,7 @@ SANDBOX_BACKEND 未设置时使用
 
 - 不真实创建 Docker container。
 - 生成模拟 `sandbox_id` 和 `container_id`。
-- 返回 `python:3.11-slim` 作为 image。
+- 按 profile 返回 image：`cpu-python -> python:3.11-slim`，`ubuntu-basic -> ubuntu:22.04`。
 
 ### 11.2 DockerCliSandboxContainerBackend
 
@@ -418,7 +418,7 @@ docker run -d \
   --memory 512m \
   -e AGENT_ID=... \
   -e RUN_ID=... \
-  python:3.11-slim \
+  ubuntu:22.04 \
   sleep infinity
 ```
 
@@ -431,10 +431,12 @@ docker rm -f <container_name>
 当前只支持：
 
 ```text
-profile = cpu-python
-image = python:3.11-slim
+profile = cpu-python     -> image = python:3.11-slim
+profile = ubuntu-basic   -> image = ubuntu:22.04
 CPU only
 ```
+
+`ubuntu-basic` 使用官方 Ubuntu 基础镜像，包含 `apt/apt-get/dpkg` 等包管理基础能力，但不承诺预装 Python、git、curl 等开发工具。如果后续 Agent 需要稳定执行开发任务，建议新增自定义镜像 profile，例如 `ubuntu-python`。
 
 暂不支持 GPU、K8S、文件挂载、命令执行、进程管理。
 
@@ -520,7 +522,7 @@ error_code=
 1. Gateway 仍是本地原型，不是生产级高可用部署。
 2. Sandbox 默认是 in-memory mock 后端，真实 Docker 需手动开启 `SANDBOX_BACKEND=docker-cli`。
 3. Docker 后端只支持 CPU，不支持 GPU。
-4. Docker 后端只支持 `cpu-python` profile。
+4. Docker 后端当前只支持 `cpu-python` 和 `ubuntu-basic` profile。
 5. Sandbox 只做生命周期，不做文件操作、命令执行、进程控制。
 6. 没有 TTL 自动回收后台任务。
 7. 没有接入 K8S。

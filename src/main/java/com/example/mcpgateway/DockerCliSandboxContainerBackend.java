@@ -68,6 +68,9 @@ public final class DockerCliSandboxContainerBackend implements SandboxContainerB
         if (profile == null || profile.isBlank() || "cpu-python".equals(profile)) {
             return "python:3.11-slim";
         }
+        if ("ubuntu-basic".equals(profile)) {
+            return "ubuntu:22.04";
+        }
         throw new IllegalArgumentException("Unsupported sandbox profile: " + profile);
     }
 

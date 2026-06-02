@@ -385,6 +385,39 @@ image = python:3.11-slim
 workspace = /workspace/...
 ```
 
+### 8.3.1 Ubuntu 基础 Sandbox
+
+Cursor 输入：
+
+```text
+请通过 MCP Gateway 为 tenant_id=default、user_id=alice、agent_id=agent-test-001、run_id=run-ubuntu-001 创建或连接一个 ubuntu-basic sandbox
+```
+
+预期调用：
+
+```text
+call_mcp_tool(
+  service_id="sandbox",
+  tool_name="connect",
+  tenant_id="default",
+  user_id="alice",
+  agent_id="agent-test-001",
+  run_id="run-ubuntu-001",
+  profile="ubuntu-basic"
+)
+```
+
+验收标准：
+
+```text
+state = running
+created = true
+profile = ubuntu-basic
+image = ubuntu:22.04
+```
+
+说明：`ubuntu-basic` 使用官方 Ubuntu 基础镜像，包含 `apt/apt-get/dpkg` 等包管理基础能力，但不承诺预装 Python、git、curl 等开发工具。
+
 ### 8.4 重复 Connect 幂等性
 
 再次输入同一条 connect 请求。
@@ -590,4 +623,3 @@ Cursor MCP 状态：
 1.
 2.
 ```
-

@@ -39,7 +39,7 @@ public class SandboxMcpController {
     static List<ToolSchema> sandboxTools() {
         return List.of(
                 new ToolSchema("connect",
-                        "Create or reuse a Docker sandbox for one agent run",
+                        "Create or reuse a Docker sandbox for one agent run. Supported profiles: cpu-python, ubuntu-basic",
                         Map.of(
                                 "tenant_id", "string",
                                 "user_id", "string",

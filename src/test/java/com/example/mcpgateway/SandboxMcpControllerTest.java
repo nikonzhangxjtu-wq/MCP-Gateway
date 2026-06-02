@@ -44,6 +44,25 @@ class SandboxMcpControllerTest {
         assertThat(contentText(disconnect)).contains("\"state\":\"stopped\"").contains("\"released\":true");
     }
 
+    @Test
+    void sandboxMcpConnectSupportsUbuntuBasicProfile() {
+        SandboxMcpController controller = new SandboxMcpController(new SandboxRuntime(new InMemorySandboxContainerBackend()));
+        Map<String, Object> args = Map.of(
+                "tenant_id", "default",
+                "user_id", "alice",
+                "agent_id", "agent-a",
+                "run_id", "run-ubuntu",
+                "profile", "ubuntu-basic"
+        );
+
+        Map<String, Object> connect = controller.mcp(toolCall("connect", args)).getBody();
+
+        assertThat(contentText(connect))
+                .contains("\"state\":\"running\"")
+                .contains("\"profile\":\"ubuntu-basic\"")
+                .contains("\"image\":\"ubuntu:22.04\"");
+    }
+
     private Map<String, Object> toolCall(String name, Map<String, Object> arguments) {
         return Map.of(
                 "jsonrpc", "2.0",

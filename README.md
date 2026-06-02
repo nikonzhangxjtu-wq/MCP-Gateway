@@ -447,6 +447,587 @@ curl -s http://127.0.0.1:8091/mcp \
 - 返回 `deleted:true`。
 - 再调用 `get_auth_status` 时，`has_credential` 应回到 `false`。
 
+### 8.9 项目接口总览
+
+当前版本已经实现的接口分为三类：
+
+| 类型 | 接口 | 使用方 | 说明 |
+| --- | --- | --- | --- |
+| MCP Gateway 入口 | `POST /mcp` | Cursor / Agent / 公司 Agent Runtime | 对外主入口，使用 MCP JSON-RPC 协议 |
+| Sandbox MCP 入口 | `POST /sandbox/mcp` | Gateway 内部转发 | Sandbox Service 的 MCP Server 入口，通常不让 Cursor 直接调用 |
+| Mock Feishu MCP 入口 | `POST /mock/feishu/mcp` | Gateway 内部转发 | 本地 mock 服务，仅用于测试 |
+| 运维状态 | `GET /internal/status` | 运维 / 测试 / 健康检查脚本 | 查看 Gateway 当前服务目录、索引状态、可用状态 |
+| 健康检查 | `GET /actuator/health` | 运维 / 发布平台 | Spring Boot Actuator 健康检查 |
+| 指标入口 | `GET /actuator/metrics` | 运维 / 监控系统 | Spring Boot Actuator 指标入口 |
+
+#### 8.9.1 `POST /mcp`
+
+这是当前最重要的接口。Cursor 挂载 Gateway 时，只需要配置这个地址：
+
+```text
+http://127.0.0.1:8091/mcp
+```
+
+请求协议是 MCP JSON-RPC 2.0：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "list",
+  "method": "tools/list",
+  "params": {}
+}
+```
+
+返回示例：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "list",
+  "result": {
+    "tools": [
+      {
+        "name": "search_mcp_services",
+        "description": "Search MCP services visible to the current agent",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+调用下游 MCP 工具时，统一使用 Gateway catalog tool：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "call",
+  "method": "tools/call",
+  "params": {
+    "name": "call_mcp_tool",
+    "arguments": {
+      "service_id": "amap",
+      "tool_name": "maps_weather",
+      "city": "西安市"
+    }
+  }
+}
+```
+
+错误返回仍遵循 MCP JSON-RPC：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "call",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "auth_required: submit credential before calling this service"
+      }
+    ]
+  }
+}
+```
+
+当前阶段 Cursor/Agent 直接接入 `/mcp` 即可。后续公司系统如果不直接使用 MCP 协议，可以在 Gateway 上方或 Gateway 内部增加 REST OpenAPI 包装层。
+
+#### 8.9.2 `POST /sandbox/mcp`
+
+这是 Sandbox Service 的 MCP Server 入口。Gateway 在配置中把它注册为：
+
+```text
+service_id = sandbox
+```
+
+一般调用路径是：
+
+```text
+Cursor / Agent -> POST /mcp -> call_mcp_tool(service_id="sandbox") -> POST /sandbox/mcp
+```
+
+不建议业务 Agent 直接绕过 Gateway 调用 `/sandbox/mcp`，否则会绕开 Gateway 的服务发现、统一日志、权限预留和后续治理能力。
+
+Sandbox MCP 支持：
+
+| Tool | 作用 |
+| --- | --- |
+| `connect` | 为一个 agent run 懒加载创建或复用 sandbox |
+| `status` | 查询一个 agent run 绑定的 sandbox 状态 |
+| `disconnect` | 释放一个 agent run 绑定的 sandbox |
+
+#### 8.9.3 `GET /internal/status`
+
+用于上线前和运行中排查 Gateway 状态：
+
+```bash
+curl -s http://127.0.0.1:8091/internal/status
+```
+
+返回示例：
+
+```json
+{
+  "service_count": 6,
+  "indexed_count": 4,
+  "auth_required_count": 1,
+  "unavailable_count": 0,
+  "catalog_tool_count": 9,
+  "services": [
+    {
+      "id": "amap",
+      "name": "AMap MCP",
+      "transport": "streamable-http",
+      "requires_user_credential": true,
+      "available": true,
+      "indexed": true,
+      "tool_count": 15,
+      "last_error": "",
+      "state": "available"
+    }
+  ]
+}
+```
+
+#### 8.9.4 公司系统 REST 接入规范
+
+当前代码已经具备 MCP 入口。后续如果要接入公司内部系统，建议新增一层 REST OpenAPI 包装，接口风格参考阿里云 OpenAPI 的常见约定：
+
+- 每次响应都返回 `RequestId`，方便排查链路。
+- 2xx 表示调用成功，4xx/5xx 表示调用失败。
+- 错误返回包含 `Code`、`Message` 和 `RequestId`。
+- JSON 字段建议使用 PascalCase，例如 `ServiceId`、`ToolName`、`RequestId`。
+- 业务结果统一放在 `Data` 中。
+
+统一请求 Header：
+
+| Header | 必填 | 说明 |
+| --- | --- | --- |
+| `Authorization` | 是 | 公司系统签发的 Bearer token，当前原型暂用 `Bearer alice` |
+| `X-Request-Id` | 否 | 调用方传入的请求 ID，不传则 Gateway 生成 |
+| `X-Tenant-Id` | 是 | 租户 ID |
+| `X-User-Id` | 是 | 用户 ID |
+| `X-Agent-Id` | 是 | Agent ID |
+
+统一成功响应：
+
+```json
+{
+  "RequestId": "8F6D2A0F-7B71-4E1A-8E88-123456789ABC",
+  "Success": true,
+  "Code": "OK",
+  "Message": "success",
+  "Data": {}
+}
+```
+
+统一失败响应：
+
+```json
+{
+  "RequestId": "8F6D2A0F-7B71-4E1A-8E88-123456789ABC",
+  "Success": false,
+  "Code": "InvalidParameter.ServiceId",
+  "Message": "ServiceId is required.",
+  "Data": null
+}
+```
+
+建议错误码：
+
+| Code | HTTP 状态码 | 说明 |
+| --- | --- | --- |
+| `OK` | 200 | 调用成功 |
+| `InvalidParameter` | 400 | 参数非法 |
+| `InvalidParameter.ServiceId` | 400 | `ServiceId` 缺失或格式错误 |
+| `InvalidParameter.ToolName` | 400 | `ToolName` 缺失或格式错误 |
+| `AuthRequired` | 401 | 服务需要用户凭证 |
+| `PermissionDenied` | 403 | 当前用户无权发现或调用该服务 |
+| `ServiceNotFound` | 404 | MCP 服务不存在 |
+| `ToolNotFound` | 404 | MCP 工具不存在 |
+| `ServiceUnavailable` | 503 | 下游 MCP 服务不可用 |
+| `DownstreamTimeout` | 504 | 下游 MCP 调用超时 |
+| `InternalError` | 500 | Gateway 内部错误 |
+
+建议 REST 包装接口如下。注意：这是后续接入公司系统的目标接口设计，当前版本的等价能力已经通过 `/mcp` 的 catalog tools 实现。
+
+##### 服务发现
+
+```text
+POST /api/v1/mcp/services/search
+```
+
+请求：
+
+```json
+{
+  "Query": "高德地图",
+  "IncludeUnavailable": false
+}
+```
+
+响应：
+
+```json
+{
+  "RequestId": "8F6D2A0F-7B71-4E1A-8E88-123456789ABC",
+  "Success": true,
+  "Code": "OK",
+  "Message": "success",
+  "Data": {
+    "Services": [
+      {
+        "ServiceId": "amap",
+        "Name": "AMap MCP",
+        "Description": "Official AMap remote MCP service",
+        "Tags": ["amap", "高德", "地图", "天气"],
+        "Transport": "streamable-http",
+        "Available": true,
+        "Indexed": true,
+        "RequiresUserCredential": true,
+        "ToolCount": 15
+      }
+    ]
+  }
+}
+```
+
+##### 查看服务详情
+
+```text
+POST /api/v1/mcp/services/describe
+```
+
+请求：
+
+```json
+{
+  "ServiceId": "amap"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "Service": {
+    "ServiceId": "amap",
+    "Name": "AMap MCP",
+    "Description": "Official AMap remote MCP service",
+    "Tags": ["amap", "高德", "地图", "天气"],
+    "Transport": "streamable-http",
+    "Available": true,
+    "Indexed": true,
+    "RequiresUserCredential": true,
+    "ToolCount": 15,
+    "LastError": "",
+    "LastSyncedAt": "2026-06-02T10:00:00+08:00"
+  }
+}
+```
+
+##### 查看服务工具
+
+```text
+POST /api/v1/mcp/tools/list
+```
+
+请求：
+
+```json
+{
+  "ServiceId": "amap"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "ServiceId": "amap",
+  "Tools": [
+    {
+      "Name": "maps_weather",
+      "Description": "根据城市名称或者标准 adcode 查询指定城市的天气",
+      "InputSchema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": ["city"]
+      }
+    }
+  ]
+}
+```
+
+##### 调用 MCP 工具
+
+```text
+POST /api/v1/mcp/tools/call
+```
+
+请求：
+
+```json
+{
+  "ServiceId": "amap",
+  "ToolName": "maps_weather",
+  "Arguments": {
+    "city": "西安市"
+  }
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "ServiceId": "amap",
+  "ToolName": "maps_weather",
+  "Result": {
+    "city": "西安市",
+    "forecasts": []
+  }
+}
+```
+
+##### 查看凭证状态
+
+```text
+POST /api/v1/mcp/credentials/status
+```
+
+请求：
+
+```json
+{
+  "ServiceId": "amap"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "ServiceId": "amap",
+  "RequiresUserCredential": true,
+  "HasCredential": true,
+  "Callable": true,
+  "Indexed": true,
+  "NextAction": "call_mcp_tool"
+}
+```
+
+##### 查看凭证要求
+
+```text
+POST /api/v1/mcp/credentials/requirements
+```
+
+请求：
+
+```json
+{
+  "ServiceId": "amap"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "ServiceId": "amap",
+  "Requirements": [
+    {
+      "Name": "api_key",
+      "Description": "高德开放平台 Web 服务 Key",
+      "Secret": true
+    }
+  ]
+}
+```
+
+##### 提交用户凭证
+
+```text
+POST /api/v1/mcp/credentials/submit
+```
+
+请求：
+
+```json
+{
+  "ServiceId": "amap",
+  "CredentialType": "api_key",
+  "CredentialValue": "真实 Key"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "ServiceId": "amap",
+  "Stored": true,
+  "MaskedCredential": "****c43b",
+  "NextAction": "refresh_mcp_service"
+}
+```
+
+##### 删除用户凭证
+
+```text
+POST /api/v1/mcp/credentials/delete
+```
+
+请求：
+
+```json
+{
+  "ServiceId": "amap"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "ServiceId": "amap",
+  "Deleted": true
+}
+```
+
+##### 刷新服务索引
+
+```text
+POST /api/v1/mcp/services/refresh
+```
+
+请求：
+
+```json
+{
+  "ServiceId": "amap"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "ServiceId": "amap",
+  "Indexed": true,
+  "ToolCount": 15,
+  "LastSyncedAt": "2026-06-02T10:00:00+08:00"
+}
+```
+
+##### Sandbox connect
+
+```text
+POST /api/v1/sandboxes/connect
+```
+
+请求：
+
+```json
+{
+  "TenantId": "default",
+  "UserId": "alice",
+  "AgentId": "agent-001",
+  "RunId": "run-001",
+  "Profile": "ubuntu-basic",
+  "TtlSeconds": 3600
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "SandboxId": "sbx_1",
+  "ContainerId": "mcp_sbx_1",
+  "State": "running",
+  "Created": true,
+  "Reused": false,
+  "Workspace": "/workspace/sbx_1",
+  "Profile": "ubuntu-basic",
+  "Image": "ubuntu:22.04",
+  "CreatedAt": "2026-06-02T10:00:00+08:00",
+  "LastActiveAt": "2026-06-02T10:00:00+08:00"
+}
+```
+
+##### Sandbox status
+
+```text
+POST /api/v1/sandboxes/status
+```
+
+请求：
+
+```json
+{
+  "TenantId": "default",
+  "UserId": "alice",
+  "AgentId": "agent-001",
+  "RunId": "run-001"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "SandboxId": "sbx_1",
+  "ContainerId": "mcp_sbx_1",
+  "State": "running",
+  "Workspace": "/workspace/sbx_1",
+  "Profile": "ubuntu-basic",
+  "Image": "ubuntu:22.04"
+}
+```
+
+##### Sandbox disconnect
+
+```text
+POST /api/v1/sandboxes/disconnect
+```
+
+请求：
+
+```json
+{
+  "TenantId": "default",
+  "UserId": "alice",
+  "AgentId": "agent-001",
+  "RunId": "run-001"
+}
+```
+
+响应 `Data`：
+
+```json
+{
+  "SandboxId": "sbx_1",
+  "State": "stopped",
+  "Disconnected": true,
+  "Released": true
+}
+```
+
 ## 9. 可维护、可观测、可测试入口
 
 为了满足“可维可测”要求，当前版本新增了专门的运行状态接口和 Spring Actuator 健康/指标入口。
@@ -698,7 +1279,12 @@ service_id = sandbox
 export SANDBOX_BACKEND=docker-cli
 ```
 
-然后启动 Gateway。`docker-cli` 后端会使用 `python:3.11-slim` 作为 `cpu-python` profile 的基础镜像。
+然后启动 Gateway。当前支持的 sandbox profile：
+
+| profile | image | 说明 |
+| --- | --- | --- |
+| `cpu-python` | `python:3.11-slim` | 默认 Python 基础沙盒 |
+| `ubuntu-basic` | `ubuntu:22.04` | 官方 Ubuntu 基础镜像，包含 `apt/apt-get/dpkg` 等包管理基础能力，但不承诺预装 Python、git、curl 等开发工具 |
 
 通过 Gateway 调用 sandbox：
 
@@ -707,6 +1293,15 @@ curl -s http://127.0.0.1:8091/mcp \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer alice' \
   -d '{"jsonrpc":"2.0","id":"sandbox-connect","method":"tools/call","params":{"name":"call_mcp_tool","arguments":{"service_id":"sandbox","tool_name":"connect","tenant_id":"default","user_id":"alice","agent_id":"agent-001","run_id":"run-001","profile":"cpu-python"}}}'
+```
+
+创建 Ubuntu 基础 sandbox：
+
+```bash
+curl -s http://127.0.0.1:8091/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer alice' \
+  -d '{"jsonrpc":"2.0","id":"sandbox-ubuntu-connect","method":"tools/call","params":{"name":"call_mcp_tool","arguments":{"service_id":"sandbox","tool_name":"connect","tenant_id":"default","user_id":"alice","agent_id":"agent-001","run_id":"run-ubuntu-001","profile":"ubuntu-basic"}}}'
 ```
 
 查询状态：

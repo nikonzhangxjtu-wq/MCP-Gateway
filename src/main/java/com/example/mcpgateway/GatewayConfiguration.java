@@ -9,16 +9,12 @@ import com.example.mcpgateway.mcp.StdioMcpClient;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
 @Configuration
 @EnableConfigurationProperties(McpServiceCatalogProperties.class)
 public class GatewayConfiguration {
-    @Bean
-    RestTemplate restTemplate() {
-        return new RestTemplate();
-    }
-
     @Bean
     SandboxRuntime sandboxRuntime() {
         String backend = System.getenv().getOrDefault("SANDBOX_BACKEND", "in-memory");
@@ -29,10 +25,10 @@ public class GatewayConfiguration {
     }
 
     @Bean
-    GatewayRuntime gatewayRuntime(RestTemplate restTemplate, McpServiceCatalogProperties properties) {
+    GatewayRuntime gatewayRuntime(McpServiceCatalogProperties properties) {
         DownstreamClientRegistry downstreamClients = new DownstreamClientRegistry();
         GatewayRuntime runtime = GatewayRuntime.createDefault(downstreamClients, EncryptedFileCredentialStore.defaultStore());
-        registerConfiguredServices(properties, downstreamClients, runtime, restTemplate);
+        registerConfiguredServices(properties, downstreamClients, runtime);
         registerDefaultCredentials(properties, runtime);
         return runtime;
     }
@@ -45,8 +41,7 @@ public class GatewayConfiguration {
     private void registerConfiguredServices(
             McpServiceCatalogProperties properties,
             DownstreamClientRegistry downstreamClients,
-            GatewayRuntime runtime,
-            RestTemplate restTemplate
+            GatewayRuntime runtime
     ) {
         for (McpServiceCatalogProperties.ServiceConfig service : properties.getServices()) {
             if (!service.isEnabled()) {
@@ -55,7 +50,7 @@ public class GatewayConfiguration {
             if ("streamable-http".equals(service.getTransport())) {
                 downstreamClients.register(service.getId(), new StreamableHttpMcpClient(
                         service.getUrl(),
-                        restTemplate,
+                        restTemplateWithTimeout(service.getTimeoutMs()),
                         bootstrapTools(service)
                 ));
                 runtime.registerService(ServiceDefinition.streamableHttp(
@@ -133,5 +128,13 @@ public class GatewayConfiguration {
             return SandboxMcpController.sandboxTools();
         }
         throw new IllegalArgumentException("Unknown bootstrapTools provider: " + service.getBootstrapTools());
+    }
+
+    static RestTemplate restTemplateWithTimeout(long timeoutMs) {
+        int timeout = Math.toIntExact(timeoutMs);
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(timeout);
+        requestFactory.setReadTimeout(timeout);
+        return new RestTemplate(requestFactory);
     }
 }

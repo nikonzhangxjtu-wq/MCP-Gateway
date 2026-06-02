@@ -46,6 +46,24 @@ class SandboxRuntimeTest {
     }
 
     @Test
+    void ubuntuBasicProfileCreatesUbuntuSandbox() {
+        SandboxRuntime runtime = new SandboxRuntime(new InMemorySandboxContainerBackend());
+
+        SandboxSession session = runtime.connect(new SandboxRequest(
+                "default",
+                "alice",
+                "agent-a",
+                "run-ubuntu",
+                "ubuntu-basic",
+                3600
+        ));
+
+        assertThat(session.state()).isEqualTo("running");
+        assertThat(session.profile()).isEqualTo("ubuntu-basic");
+        assertThat(session.image()).isEqualTo("ubuntu:22.04");
+    }
+
+    @Test
     void disconnectStopsAndReleasesOwnedSandbox() {
         SandboxRuntime runtime = new SandboxRuntime(new InMemorySandboxContainerBackend());
         SandboxRequest request = request("agent-a", "run-1");

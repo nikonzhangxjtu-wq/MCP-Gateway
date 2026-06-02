@@ -102,6 +102,7 @@ public final class StdioProcessTransport implements AutoCloseable {
             }
             return line;
         } catch (TimeoutException error) {
+            close();
             throw new McpProtocolException("Timed out waiting for downstream MCP response. stderr=" + stderr, error);
         } catch (McpProtocolException error) {
             throw error;
@@ -115,6 +116,10 @@ public final class StdioProcessTransport implements AutoCloseable {
             throw new McpProtocolException("Downstream MCP server is not running. exit="
                     + process.exitValue() + " stderr=" + stderr);
         }
+    }
+
+    boolean isRunning() {
+        return process.isAlive();
     }
 
     private void startStderrCapture() {
